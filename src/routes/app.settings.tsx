@@ -13,6 +13,7 @@ import { useAuth } from "@/lib/auth";
 import { getSettings, saveSettings } from "@/lib/settings";
 import { seedDemoData } from "@/lib/seed";
 import { useQueryClient } from "@tanstack/react-query";
+import { pushUserProfileToCloud } from "@/lib/sync";
 
 export const Route = createFileRoute("/app/settings")({
   head: () => ({ meta: [{ title: "Settings — Amanah Library System" }] }),
@@ -35,8 +36,14 @@ function Settings() {
     toast.success(t("saved"));
   };
 
-  const save = () => {
+  const save = async () => {
     saveSettings(s);
+    if (user?.uid) {
+      await pushUserProfileToCloud(user.uid, user.libraryName || s.libraryName, {
+        openRouterKey: s.openRouterKey,
+        aiModel: s.aiModel,
+      });
+    }
     toast.success(t("saved"));
   };
 

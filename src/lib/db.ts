@@ -1,5 +1,6 @@
 import { openDB, type IDBPDatabase } from "idb";
 import type { AppNotification, BorrowRecord, Reservation } from "./types";
+import { pushToCloud, deleteFromCloud } from "./sync";
 
 const DB_NAME = "amanah-library";
 const DB_VERSION = 1;
@@ -41,36 +42,53 @@ async function allByLibrary<T>(store: string, libraryId: string): Promise<T[]> {
 export async function getBorrows(libraryId: string) {
   return allByLibrary<BorrowRecord>("borrows", libraryId);
 }
-export async function putBorrow(rec: BorrowRecord) {
+export async function putBorrow(rec: BorrowRecord, skipCloud = false) {
   const db = await getDB();
   await db.put("borrows", rec);
+  if (!skipCloud) {
+    pushToCloud("borrows", rec);
+  }
 }
 
 // Reservations
 export async function getReservations(libraryId: string) {
   return allByLibrary<Reservation>("reservations", libraryId);
 }
-export async function putReservation(rec: Reservation) {
+export async function putReservation(rec: Reservation, skipCloud = false) {
   const db = await getDB();
   await db.put("reservations", rec);
+  if (!skipCloud) {
+    pushToCloud("reservations", rec);
+  }
 }
-export async function deleteReservation(id: string) {
+export async function deleteReservation(id: string, skipCloud = false) {
   const db = await getDB();
   await db.delete("reservations", id);
+  if (!skipCloud) {
+    deleteFromCloud("reservations", id);
+  }
 }
 
 // Notifications
 export async function getNotifications(libraryId: string) {
   return allByLibrary<AppNotification>("notifications", libraryId);
 }
-export async function putNotification(rec: AppNotification) {
+export async function putNotification(rec: AppNotification, skipCloud = false) {
   const db = await getDB();
   await db.put("notifications", rec);
+  if (!skipCloud) {
+    pushToCloud("notifications", rec);
+  }
 }
-export async function putNotifications(recs: AppNotification[]) {
+export async function putNotifications(recs: AppNotification[], skipCloud = false) {
   const db = await getDB();
   const tx = db.transaction("notifications", "readwrite");
-  await Promise.all(recs.map((r) => tx.store.put(r)));
+  await Promise.all(recs.map(async (r) => {
+    await tx.store.put(r);
+    if (!skipCloud) {
+      pushToCloud("notifications", r);
+    }
+  }));
   await tx.done;
 }
 

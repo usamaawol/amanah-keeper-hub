@@ -10,6 +10,7 @@ import {
 import type { AppUser } from "./types";
 import { getSettings, saveSettings } from "./settings";
 import { logAudit } from "./audit";
+import { syncFromCloud, pushAllToCloud, pushUserProfileToCloud, fetchUserProfileFromCloud } from "./sync";
 
 const USER_KEY = "amanah-user";
 const LIBNAMES_KEY = "amanah-libnames";
@@ -120,6 +121,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (raw) {
         restored = JSON.parse(raw) as AppUser;
         setUser(restored);
+        if (restored.libraryId && restored.uid) {
+          syncFromCloud(restored.libraryId, restored.uid);
+        }
       }
     } catch { /* ignore */ }
 
@@ -147,6 +151,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const refreshed = userFromFirebase(fbUser, libraryName);
           setUser(refreshed);
           persist(refreshed);
+          syncFromCloud(refreshed.libraryId!, refreshed.uid);
         });
       } catch {
         // Firebase unavailable (offline / misconfigured) — localStorage session still works
@@ -158,13 +163,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const finish = useCallback((next: AppUser) => {
+    const settings = getSettings();
     if (next.libraryName) {
       storeLibName(next.uid, next.libraryName);
       saveSettings({ libraryName: next.libraryName });
+      pushUserProfileToCloud(next.uid, next.libraryName, {
+        openRouterKey: settings.openRouterKey,
+        aiModel: settings.aiModel,
+      });
     }
     setUser(next);
     persist(next);
     logAudit(next.uid, "login");
+    if (next.libraryId && next.uid) {
+      pushAllToCloud(next.libraryId, next.uid);
+      syncFromCloud(next.libraryId, next.uid);
+    }
   }, []);
 
   const signUpWithEmail = useCallback(
@@ -201,8 +215,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const auth = await getFirebaseAuth(firebaseConfig);
           const { signInWithEmailAndPassword } = await import("firebase/auth");
           const cred = await signInWithEmailAndPassword(auth, email, password);
-          const name = getStoredLibName(cred.user.uid) || cred.user.displayName || `${email.split("@")[0]}'s Library`;
-          finish(userFromFirebase(cred.user, name));
+          
+          // Try to get library name from cloud profile first
+           const cloudProfile = await fetchUserProfileFromCloud(cred.user.uid);
+           const name = cloudProfile?.libraryName || 
+                        getStoredLibName(cred.user.uid) || 
+                        cred.user.displayName || 
+                        `${email.split("@")[0]}'s Library`;
+           
+           if (cloudProfile) {
+             saveSettings({
+               libraryName: cloudProfile.libraryName,
+               openRouterKey: cloudProfile.openRouterKey || "",
+               aiModel: cloudProfile.aiModel || "openai/gpt-4o-mini",
+             });
+           }
+           
+           finish(userFromFirebase(cred.user, name));
           return;
         } catch (e) {
           console.error("Firebase sign-in failed, using offline account", e);
@@ -232,10 +261,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         provider.addScope("profile");
 
         const cred = await signInWithPopup(auth, provider);
-        const name =
-          getStoredLibName(cred.user.uid) ||
-          (cred.user.displayName ? `${cred.user.displayName}'s Library` : "My Library");
-        const next = userFromFirebase(cred.user, name);
+        
+        // Try to get library name from cloud profile first
+         const cloudProfile = await fetchUserProfileFromCloud(cred.user.uid);
+         const name = cloudProfile?.libraryName ||
+                      getStoredLibName(cred.user.uid) ||
+                      (cred.user.displayName ? `${cred.user.displayName}'s Library` : "My Library");
+         
+         if (cloudProfile) {
+           saveSettings({
+             libraryName: cloudProfile.libraryName,
+             openRouterKey: cloudProfile.openRouterKey || "",
+             aiModel: cloudProfile.aiModel || "openai/gpt-4o-mini",
+           });
+         }
+         
+         const next = userFromFirebase(cred.user, name);
         saveSettings({ userDisplayName: next.displayName, userEmail: next.email, userPhotoURL: next.photoURL ?? "" });
         finish(next);
         return;
@@ -289,6 +330,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const updateAccount = useCallback(
     async (changes: { displayName?: string; libraryName?: string }) => {
+      let updatedUser: AppUser | null = null;
       setUser((prev) => {
         if (!prev) return prev;
         const next: AppUser = {
@@ -296,11 +338,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           displayName: changes.displayName?.trim() || prev.displayName,
           libraryName: changes.libraryName?.trim() || prev.libraryName,
         };
+        updatedUser = next;
         persist(next);
         if (next.libraryName) storeLibName(next.uid, next.libraryName);
         saveSettings({ libraryName: next.libraryName ?? "", userDisplayName: next.displayName });
         return next;
       });
+
+      if (updatedUser) {
+        const settings = getSettings();
+        pushUserProfileToCloud((updatedUser as AppUser).uid, (updatedUser as AppUser).libraryName || "", {
+          openRouterKey: settings.openRouterKey,
+          aiModel: settings.aiModel,
+        });
+      }
+
       const { firebaseConfig } = getSettings();
       if (changes.displayName?.trim() && firebaseConfig.trim()) {
         try {

@@ -3,6 +3,9 @@
 // Database (library records) always remains the source of truth — this
 // memory only provides conversational context for follow-up questions.
 
+import { doc, setDoc, deleteDoc } from "firebase/firestore";
+import { getFirebase } from "./firebase";
+
 export interface ConvMessage {
   id: string;
   role: "user" | "assistant";
@@ -39,9 +42,27 @@ export function loadConversations(userId: string): Conversation[] {
   }
 }
 
-function saveAll(userId: string, list: Conversation[]) {
+export function saveAllLocal(userId: string, list: Conversation[]) {
   if (typeof window === "undefined" || !userId) return;
   localStorage.setItem(key(userId), JSON.stringify(list));
+}
+
+export function saveAll(userId: string, list: Conversation[], skipCloud = false) {
+  saveAllLocal(userId, list);
+  
+  if (!skipCloud) {
+    const { db } = getFirebase();
+    if (db) {
+      list.forEach(conv => {
+        try {
+          setDoc(doc(db, "aiConversations", conv.id), {
+            ...conv,
+            syncedAt: new Date().toISOString()
+          });
+        } catch (e) { /* ignore, offline */ }
+      });
+    }
+  }
 }
 
 export function getConversation(userId: string, id: string): Conversation | null {
@@ -97,10 +118,16 @@ export function appendMessage(
 }
 
 export function deleteConversation(userId: string, convId: string) {
-  saveAll(
-    userId,
-    loadConversations(userId).filter((c) => c.id !== convId),
-  );
+  const list = loadConversations(userId).filter((c) => c.id !== convId);
+  saveAll(userId, list);
+
+  // Also delete from cloud
+  const { db } = getFirebase();
+  if (db) {
+    try {
+      deleteDoc(doc(db, "aiConversations", convId));
+    } catch (e) { /* ignore */ }
+  }
 }
 
 // Group conversations into Today / Yesterday / Last Week / Older buckets.
