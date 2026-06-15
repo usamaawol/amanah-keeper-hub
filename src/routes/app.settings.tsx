@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { CheckCircle2 } from "lucide-react";
+import { CheckCircle2, Eye, EyeOff } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/ui-bits";
@@ -28,6 +28,7 @@ function Settings() {
 
   const [displayName, setDisplayName] = useState(user?.displayName ?? "");
   const [libName, setLibName] = useState(user?.libraryName ?? "");
+  const [showSavedPassword, setShowSavedPassword] = useState(false);
 
   const saveProfile = async () => {
     await updateAccount({ displayName, libraryName: libName });
@@ -73,6 +74,42 @@ function Settings() {
           <Input value={user?.email ?? ""} readOnly disabled />
         </div>
         <Button onClick={saveProfile} className="bg-gradient-primary">
+          {t("save")}
+        </Button>
+      </section>
+
+      <section className="space-y-4 rounded-2xl border border-border bg-card p-5">
+        <h2 className="font-semibold">Saved Login</h2>
+        <p className="text-sm text-muted-foreground">Save your credentials here for quicker sign-in next time.</p>
+        <div className="space-y-1.5">
+          <Label>Email</Label>
+          <Input
+            type="email"
+            value={s.savedEmail ?? ""}
+            onChange={(e) => setS({ ...s, savedEmail: e.target.value })}
+            placeholder="you@example.com"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label>Password</Label>
+          <div className="relative">
+            <Input
+              type={showSavedPassword ? "text" : "password"}
+              value={s.savedPassword ?? ""}
+              onChange={(e) => setS({ ...s, savedPassword: e.target.value })}
+              placeholder="••••••••"
+              className="pr-10"
+            />
+            <button
+              type="button"
+              onClick={() => setShowSavedPassword(!showSavedPassword)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              {showSavedPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+            </button>
+          </div>
+        </div>
+        <Button onClick={save} className="bg-gradient-primary">
           {t("save")}
         </Button>
       </section>

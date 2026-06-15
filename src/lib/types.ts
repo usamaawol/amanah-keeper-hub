@@ -68,6 +68,9 @@ export interface AppSettings {
   userDisplayName: string;
   userEmail: string;
   userPhotoURL: string;
+  // Saved login credentials
+  savedEmail?: string;
+  savedPassword?: string;
 }
 
 export interface ReaderProfile {

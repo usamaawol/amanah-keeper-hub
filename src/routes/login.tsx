@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { ShieldCheck, WifiOff } from "lucide-react";
+import { ShieldCheck, WifiOff, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import { PublicLayout } from "@/components/PublicLayout";
 import { Button } from "@/components/ui/button";
