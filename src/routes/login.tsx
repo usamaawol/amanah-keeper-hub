@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { useI18n } from "@/lib/i18n";
 import { useAuth, AccountExistsError } from "@/lib/auth";
 import { useOnline } from "@/lib/store";
+import { getSettings } from "@/lib/settings";
 
 export const Route = createFileRoute("/login")({
   head: () => ({ meta: [{ title: "Sign In — Amanah Library System" }] }),
@@ -35,8 +36,10 @@ function Login() {
   const online = useOnline();
 
   const [mode, setMode] = useState<"signin" | "signup">("signin");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const settings = getSettings();
+  const [email, setEmail] = useState(settings.savedEmail ?? "");
+  const [password, setPassword] = useState(settings.savedPassword ?? "");
+  const [showPassword, setShowPassword] = useState(false);
   const [libraryName, setLibraryName] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -150,13 +153,23 @@ function Login() {
             </div>
             <div className="space-y-1.5">
               <Label>{t("password")}</Label>
-              <Input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                autoComplete={mode === "signup" ? "new-password" : "current-password"}
-              />
+              <div className="relative">
+                <Input
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  autoComplete={mode === "signup" ? "new-password" : "current-password"}
+                  className="pr-10"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                </button>
+              </div>
             </div>
             <Button type="submit" disabled={busy || !online} className="w-full bg-gradient-primary">
               {mode === "signup" ? t("createAccount") : t("signIn")}
