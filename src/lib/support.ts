@@ -42,7 +42,11 @@ async function getFirestore(configJson: string) {
   return getFirestore(app);
 }
 
-/** Send a support message — to Firestore when configured, plus a local copy. */
+/** 
+ * Send a support message. 
+ * High priority: deliver to Firestore support_messages collection.
+ * Superadmins watch this collection in their Support Inbox.
+ */
 export async function sendSupportMessage(
   input: Omit<SupportMessage, "id" | "createdAt" | "status">,
 ): Promise<void> {
@@ -53,6 +57,7 @@ export async function sendSupportMessage(
     createdAt: new Date().toISOString(),
   };
 
+  // Local backup for offline/fallback
   const list = localList();
   list.unshift(msg);
   localSave(list);
@@ -61,10 +66,19 @@ export async function sendSupportMessage(
   if (firebaseConfig.trim()) {
     try {
       const db = await getFirestore(firebaseConfig);
-      const { collection, doc, setDoc } = await import("firebase/firestore");
-      await setDoc(doc(collection(db, "support_messages"), msg.id), msg);
+      const { collection, doc, setDoc, serverTimestamp } = await import("firebase/firestore");
+      
+      // Save to global support inbox
+      await setDoc(doc(collection(db, "support_messages"), msg.id), {
+        ...msg,
+        syncedAt: serverTimestamp(),
+      });
+      
+      console.log("[Support] Message delivered to Firestore:", msg.id);
     } catch (e) {
-      console.error("Failed to deliver support message to cloud", e);
+      console.error("[Support] Failed to deliver message to Firestore", e);
+      // We don't throw here because we have the local backup, 
+      // but the UI might want to know.
     }
   }
 }

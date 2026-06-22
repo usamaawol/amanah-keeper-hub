@@ -34,10 +34,8 @@ function firebaseConfigFromEnv(): string {
 
 const DEFAULTS: AppSettings = {
   libraryName: "",
-  // OpenRouter key: set VITE_OPENROUTER_API_KEY in your deployment environment.
-  // Users can also enter their own key in the app Settings page.
-  openRouterKey: (import.meta.env.VITE_OPENROUTER_API_KEY as string) || "",
-  aiModel: "openai/gpt-4o-mini",
+  // NOTE: The OpenRouter API key is stored server-side only (OPENROUTER_API_KEY
+  // env var, no VITE_ prefix). It is never bundled into the client.
   firebaseConfig: firebaseConfigFromEnv(),
   userDisplayName: "",
   userEmail: "",
@@ -55,16 +53,14 @@ export function getSettings(): AppSettings {
       ...DEFAULTS,
       ...stored,
       firebaseConfig: stored.firebaseConfig?.trim() || DEFAULTS.firebaseConfig,
-      openRouterKey: stored.openRouterKey?.trim() || DEFAULTS.openRouterKey,
     };
   } catch {
     return { ...DEFAULTS };
   }
 }
 
-
 export function saveSettings(s: Partial<AppSettings>) {
   if (typeof window === "undefined") return;
-  const next = { ...getSettings(), ...s };
+  const next = { ...getSettings(), ...s, updatedAt: new Date().toISOString() };
   localStorage.setItem(KEY, JSON.stringify(next));
 }

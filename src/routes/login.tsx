@@ -10,6 +10,7 @@ import { useI18n } from "@/lib/i18n";
 import { useAuth, AccountExistsError } from "@/lib/auth";
 import { useOnline } from "@/lib/store";
 import { getSettings } from "@/lib/settings";
+import { canAccessLibrary } from "@/lib/roles";
 
 export const Route = createFileRoute("/login")({
   head: () => ({ meta: [{ title: "Sign In — Amanah Library System" }] }),
@@ -31,7 +32,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function Login() {
   const { t } = useI18n();
-  const { user, signInWithEmail, signUpWithEmail, signInWithGoogle } = useAuth();
+  const { user, loading, signInWithEmail, signUpWithEmail, signInWithGoogle } = useAuth();
   const navigate = useNavigate();
   const online = useOnline();
 
@@ -44,8 +45,10 @@ function Login() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (user?.role === "admin") navigate({ to: "/app/dashboard" });
-  }, [user, navigate]);
+    if (!loading && user && canAccessLibrary(user.role, user.disabled)) {
+      navigate({ to: "/app/dashboard" });
+    }
+  }, [user, loading, navigate]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();

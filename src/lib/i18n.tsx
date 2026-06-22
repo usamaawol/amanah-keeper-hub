@@ -93,8 +93,15 @@ export const translations: Dict = {
   recentActivity: { en: "Recent Activity", ar: "النشاط الأخير", om: "Hojii Dhiheenya" },
   quickSearch: { en: "Quick search…", ar: "بحث سريع…", om: "Barbaadii saffisaa…" },
   askAi: { en: "Ask AI", ar: "اسأل الذكاء", om: "AI gaafadhu" },
-  // borrow fields
-  borrowerName: { en: "Borrower Full Name", ar: "الاسم الكامل للمستعير" },
+  author: { en: "Author", ar: "المؤلف" },
+  phoneNumber: { en: "Phone Number", ar: "رقم الهاتف", om: "Lakkoofsa Bilbilaa" },
+  remarks: { en: "Remarks", ar: "ملاحظات إضافية" },
+  // contact admin
+  contactAdmin: { en: "Contact Admin", ar: "تواصل مع المشرف", om: "Bulchaa Quunnami" },
+  messagePlaceholder: { en: "Write your message to the administrator...", ar: "اكتب رسالتك إلى المشرف...", om: "Ergaa kee bulchaaf barreessi..." },
+  sendMessage: { en: "Send Message", ar: "إرسال الرسالة", om: "Ergaa Ergi" },
+  messageSent: { en: "Your message has been sent to the super admin.", ar: "تم إرسال رسالتك إلى المشرف العام.", om: "Ergaan kee bulchaa ol'aanaaf ergameera." },
+  messageError: { en: "Failed to send message. Please try again.", ar: "فشل إرسال الرسالة. يرجى المحاولة مرة أخرى.", om: "Ergaa erguun hin danda'amne. Maaloo irra deebi'ii yaali." },
   bookNameArabic: { en: "Book Name (Arabic)", ar: "اسم الكتاب (عربي)" },
   bookNameEnglish: { en: "Book Name (English)", ar: "اسم الكتاب (إنجليزي)" },
   sharhName: { en: "Sharh Name (Optional)", ar: "اسم الشرح (اختياري)" },
@@ -117,6 +124,8 @@ export const translations: Dict = {
   Overdue: { en: "Overdue", ar: "متأخر", om: "Yeroon darbeera" },
   // actions
   markReturned: { en: "Mark as Returned", ar: "تحديد كمُعاد", om: "Deebi'e jedhi" },
+  undoReturn: { en: "Undo Return", ar: "تراجع عن الإرجاع", om: "Deebii siri" },
+  confirmReturn: { en: "Are you sure you want to mark this as returned?", ar: "هل أنت متأكد أنك تريد تحديد هذا كمُعاد؟", om: "Deebi'e jechuuf mirkaneessitaa?" },
   save: { en: "Save", ar: "حفظ", om: "Kuusi" },
   cancel: { en: "Cancel", ar: "إلغاء", om: "Dhiisi" },
   add: { en: "Add", ar: "إضافة", om: "Dabaluu" },
@@ -142,6 +151,9 @@ export const translations: Dict = {
   aiSend: { en: "Send", ar: "إرسال", om: "Ergi" },
   aiThinking: { en: "Thinking…", ar: "جارٍ التفكير…", om: "Yaadaa jira…" },
   aiError: { en: "Something went wrong. Please try again.", ar: "حدث خطأ ما. حاول مرة أخرى.", om: "Wanti dogoggore jira. Irra deebi'ii yaali." },
+  aiRateLimited: { en: "You're sending messages too quickly. Please wait a moment.", ar: "أنت ترسل رسائل بسرعة كبيرة. يرجى الانتظار لحظة.", om: "Ergaa baay'ee saffisaan erguutu jira. Yeroo muraasa eegadhu." },
+  aiTimeout: { en: "The AI took too long to respond. Please try again.", ar: "استغرق الذكاء الاصطناعي وقتاً طويلاً للرد. حاول مرة أخرى.", om: "AI yeroo dheeraa fudhate. Irra deebi'ii yaali." },
+  aiNotConfigured: { en: "The AI assistant is not configured. Please contact the administrator.", ar: "لم يتم إعداد المساعد الذكي. يرجى التواصل مع المسؤول.", om: "Gargaaraan AI qindaa'uu hin dandeenye. Bulchaa quunnamuu yaalii." },
   // admin-only
   adminOnlyTitle: { en: "Admins only", ar: "للمسؤولين فقط" },
   adminOnlyBody: {
@@ -162,9 +174,18 @@ export const translations: Dict = {
   // misc
   online: { en: "Online", ar: "متصل", om: "Interneetirra" },
   offline: { en: "Offline", ar: "غير متصل", om: "Interneetii malee" },
+  syncing: { en: "Syncing…", ar: "جارٍ المزامنة…", om: "Walsimsiisaa…" },
+  synced: { en: "Synced", ar: "تمت المزامنة", om: "Walsimsiifame" },
+  lastSynced: { en: "Last synced", ar: "آخر مزامنة", om: "Walsimsiisa dhumaa" },
+  pendingChanges: { en: "pending", ar: "قيد الانتظار", om: "eegaa jira" },
   empty: { en: "Nothing here yet.", ar: "لا يوجد شيء هنا بعد.", om: "Wanti hanga ammaatti hin jiru." },
   loading: { en: "Loading…", ar: "جارٍ التحميل…", om: "Fe'aa jira…" },
   today: { en: "Today", ar: "اليوم", om: "Har'a" },
+  print: { en: "Print", ar: "طباعة", om: "Maxxansi" },
+  downloadPDF: { en: "Download PDF", ar: "تحميل PDF", om: "PDF Buufadhu" },
+  borrowReport: { en: "Borrow Report", ar: "تقرير الإعارات", om: "Gabaasa Ergisaa" },
+  totalBooks: { en: "Total Books", ar: "إجمالي الكتب", om: "Waliigala Kitaabaa" },
+  generatedOn: { en: "Generated on", ar: "تم الإنشاء في", om: "Kan dhiyaate" },
   seedDemo: { en: "Load demo data", ar: "تحميل بيانات تجريبية", om: "Deetaa fakkeenya fe'i" },
   days: { en: "days", ar: "أيام", om: "guyyaa" },
   overdueBy: { en: "overdue by", ar: "متأخر بـ", om: "yeroon darbeera" },
@@ -216,8 +237,6 @@ export const translations: Dict = {
   catQuestion: { en: "Ask a question", ar: "طرح سؤال" },
   catOther: { en: "Other", ar: "أخرى" },
   yourMessage: { en: "Your Message", ar: "رسالتك" },
-  sendMessage: { en: "Send Message", ar: "إرسال الرسالة" },
-  messageSent: { en: "Message sent. Thank you!", ar: "تم إرسال الرسالة. شكراً لك!" },
   messageFailed: { en: "Could not send your message. Please try again.", ar: "تعذّر إرسال رسالتك. حاول مرة أخرى." },
   // support inbox (super admin)
   supportInbox: { en: "Support Inbox", ar: "صندوق الدعم" },
@@ -235,6 +254,18 @@ export const translations: Dict = {
   delete: { en: "Delete", ar: "حذف", om: "Haquu" },
   // super admin
   superAdmin: { en: "Super Admin", ar: "المشرف العام", om: "Bulchaa Ol'aanaa" },
+  superAdminDashboard: {
+    en: "Super Admin Control Center",
+    ar: "لوحة تحكم المشرف العام",
+    om: "Giddugala Bulchaa Ol'aanaa",
+  },
+  superAdminWelcome: {
+    en: "You have full system access. Manage users, libraries, and platform settings.",
+    ar: "لديك وصول كامل للنظام. إدارة المستخدمين والمكتبات وإعدادات المنصة.",
+    om: "Eeyyama sirna guutuu qabda. Fayyadamtoota, mana kitaabaa fi qindaa'inoota bulchi.",
+  },
+  manageUsers: { en: "Manage Users", ar: "إدارة المستخدمين", om: "Fayyadamtoota Bulchi" },
+  systemOverview: { en: "System Overview", ar: "نظرة عامة على النظام", om: "Ilaalcha Sirna" },
   systemOverview: { en: "System Overview", ar: "نظرة عامة على النظام", om: "Ilaalcha Sirnaa" },
   totalUsers: { en: "Total Users", ar: "إجمالي المستخدمين", om: "Fayyadamtoota Walii" },
   totalLibraries: { en: "Total Libraries", ar: "إجمالي المكتبات", om: "Mana Kitaabaa Walii" },
@@ -246,6 +277,14 @@ export const translations: Dict = {
   deleteHistoryTitle: { en: "Delete History Record", ar: "حذف سجل من التاريخ" },
   deleteHistoryMessage: { en: "Are you sure you want to delete this history record? This action cannot be undone.", ar: "هل أنت متأكد أنك تريد حذف هذا السجل من التاريخ؟ لا يمكن التراجع عن هذا الإجراء." },
   deleteConfirm: { en: "Delete", ar: "حذف" },
+  // edit borrow
+  editBorrow: { en: "Edit Record", ar: "تعديل السجل", om: "Galmee Gulaali" },
+  editBorrowTitle: { en: "Edit Borrow Record", ar: "تعديل سجل الإعارة", om: "Galmee Ergisaa Gulaali" },
+  edit: { en: "Edit", ar: "تعديل", om: "Gulaali" },
+  recordNotFound: { en: "Record not found.", ar: "السجل غير موجود.", om: "Galmeen hin argamne." },
+  editSuccess: { en: "Record updated successfully.", ar: "تم تحديث السجل بنجاح.", om: "Galmeen milkaa'inaan haaromfame." },
+  editError: { en: "Failed to update record. Please try again.", ar: "فشل تحديث السجل. حاول مرة أخرى.", om: "Galmee haaromsuu hin dandeenye. Irra deebi'ii yaali." },
+  confirmUnsaved: { en: "You have unsaved changes. Discard them?", ar: "لديك تغييرات غير محفوظة. هل تريد تجاهلها؟", om: "Jijjiirama hin kuufamne qabda. Dhiistaa?" },
 };
 
 
@@ -267,6 +306,20 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     if (stored === "en" || stored === "ar" || stored === "om") setLangState(stored);
   }, []);
 
+  useEffect(() => {
+    const handler = () => {
+      const stored = localStorage.getItem("amanah-settings");
+      if (stored) {
+        const { language: cloudLang } = JSON.parse(stored);
+        if (cloudLang === "en" || cloudLang === "ar" || cloudLang === "om") {
+          setLangState(cloudLang);
+        }
+      }
+    };
+    window.addEventListener("amanah-settings-changed", handler);
+    return () => window.removeEventListener("amanah-settings-changed", handler);
+  }, []);
+
   // Only Arabic is RTL; English and Afaan Oromo are LTR.
   const dir: "ltr" | "rtl" = lang === "ar" ? "rtl" : "ltr";
 
@@ -278,7 +331,13 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 
   const setLang = useCallback((l: Lang) => {
     setLangState(l);
-    if (typeof window !== "undefined") localStorage.setItem("amanah-lang", l);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("amanah-lang", l);
+      // Also update settings store for sync
+      const raw = localStorage.getItem("amanah-settings");
+      const settings = raw ? JSON.parse(raw) : {};
+      localStorage.setItem("amanah-settings", JSON.stringify({ ...settings, language: l }));
+    }
   }, []);
 
   // Cycle en -> ar -> om -> en.

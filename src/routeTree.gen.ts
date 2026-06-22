@@ -26,6 +26,7 @@ import { Route as AppDashboardRouteImport } from './routes/app.dashboard'
 import { Route as AppBorrowRouteImport } from './routes/app.borrow'
 import { Route as AppAiRouteImport } from './routes/app.ai'
 import { Route as AppBorrowIndexRouteImport } from './routes/app.borrow.index'
+import { Route as AppBorrowEditRouteImport } from './routes/app.borrow.edit'
 import { Route as AppBorrowAddRouteImport } from './routes/app.borrow.add'
 
 const LoginRoute = LoginRouteImport.update({
@@ -113,6 +114,11 @@ const AppBorrowIndexRoute = AppBorrowIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AppBorrowRoute,
 } as any)
+const AppBorrowEditRoute = AppBorrowEditRouteImport.update({
+  id: '/edit',
+  path: '/edit',
+  getParentRoute: () => AppBorrowRoute,
+} as any)
 const AppBorrowAddRoute = AppBorrowAddRouteImport.update({
   id: '/add',
   path: '/add',
@@ -137,6 +143,7 @@ export interface FileRoutesByFullPath {
   '/app/super': typeof AppSuperRoute
   '/app/': typeof AppIndexRoute
   '/app/borrow/add': typeof AppBorrowAddRoute
+  '/app/borrow/edit': typeof AppBorrowEditRoute
   '/app/borrow/': typeof AppBorrowIndexRoute
 }
 export interface FileRoutesByTo {
@@ -155,6 +162,7 @@ export interface FileRoutesByTo {
   '/app/super': typeof AppSuperRoute
   '/app': typeof AppIndexRoute
   '/app/borrow/add': typeof AppBorrowAddRoute
+  '/app/borrow/edit': typeof AppBorrowEditRoute
   '/app/borrow': typeof AppBorrowIndexRoute
 }
 export interface FileRoutesById {
@@ -176,6 +184,7 @@ export interface FileRoutesById {
   '/app/super': typeof AppSuperRoute
   '/app/': typeof AppIndexRoute
   '/app/borrow/add': typeof AppBorrowAddRoute
+  '/app/borrow/edit': typeof AppBorrowEditRoute
   '/app/borrow/': typeof AppBorrowIndexRoute
 }
 export interface FileRouteTypes {
@@ -198,6 +207,7 @@ export interface FileRouteTypes {
     | '/app/super'
     | '/app/'
     | '/app/borrow/add'
+    | '/app/borrow/edit'
     | '/app/borrow/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -216,6 +226,7 @@ export interface FileRouteTypes {
     | '/app/super'
     | '/app'
     | '/app/borrow/add'
+    | '/app/borrow/edit'
     | '/app/borrow'
   id:
     | '__root__'
@@ -236,6 +247,7 @@ export interface FileRouteTypes {
     | '/app/super'
     | '/app/'
     | '/app/borrow/add'
+    | '/app/borrow/edit'
     | '/app/borrow/'
   fileRoutesById: FileRoutesById
 }
@@ -368,6 +380,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppBorrowIndexRouteImport
       parentRoute: typeof AppBorrowRoute
     }
+    '/app/borrow/edit': {
+      id: '/app/borrow/edit'
+      path: '/edit'
+      fullPath: '/app/borrow/edit'
+      preLoaderRoute: typeof AppBorrowEditRouteImport
+      parentRoute: typeof AppBorrowRoute
+    }
     '/app/borrow/add': {
       id: '/app/borrow/add'
       path: '/add'
@@ -380,11 +399,13 @@ declare module '@tanstack/react-router' {
 
 interface AppBorrowRouteChildren {
   AppBorrowAddRoute: typeof AppBorrowAddRoute
+  AppBorrowEditRoute: typeof AppBorrowEditRoute
   AppBorrowIndexRoute: typeof AppBorrowIndexRoute
 }
 
 const AppBorrowRouteChildren: AppBorrowRouteChildren = {
   AppBorrowAddRoute: AppBorrowAddRoute,
+  AppBorrowEditRoute: AppBorrowEditRoute,
   AppBorrowIndexRoute: AppBorrowIndexRoute,
 }
 

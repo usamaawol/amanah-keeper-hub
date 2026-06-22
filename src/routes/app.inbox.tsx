@@ -22,17 +22,18 @@ const CATEGORY_KEY = {
 
 function InboxPage() {
   const { t } = useI18n();
-  const { isSuperAdmin } = useAuth();
+  const { isSuperAdmin, loading } = useAuth();
   const navigate = useNavigate();
   const [messages, setMessages] = useState<SupportMessage[] | null>(null);
 
   useEffect(() => {
+    if (loading) return;
     if (!isSuperAdmin) {
       navigate({ to: "/app/dashboard" });
       return;
     }
     getSupportMessages().then(setMessages).catch(() => setMessages([]));
-  }, [isSuperAdmin, navigate]);
+  }, [isSuperAdmin, loading, navigate]);
 
   const toggle = async (m: SupportMessage) => {
     const next = m.status === "open" ? "resolved" : "open";
@@ -44,7 +45,7 @@ function InboxPage() {
     }
   };
 
-  if (!isSuperAdmin) return null;
+  if (loading || !isSuperAdmin) return null;
 
   return (
     <div>

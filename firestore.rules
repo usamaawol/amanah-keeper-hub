@@ -2,83 +2,154 @@ rules_version = '2';
 
 // Amanah Library System — Firestore Security Rules
 //
+// Authorization is role-based. Roles live in users/{uid}.role — NEVER in source code.
+// Valid roles: superadmin | admin | librarian | assistant | user
+//
 // Data model:
-//   /users/{uid}                       (profile: uid, displayName, email, photoURL, role, createdAt, lastLoginAt)
+//   /users/{uid}                       (profile + role)
 //   /users/{uid}/borrows/{id}
 //   /users/{uid}/reservations/{id}
 //   /users/{uid}/notifications/{id}
-//   /aiConversations/{id}              (userId, title, createdAt, updatedAt)
-//   /aiConversations/{id}/messages/{id}(role, content, timestamp)
-//   /auditLogs/{id}                    (userId, action, timestamp)
-//   /support_messages/{id}             (contact/support inbox)
+//   /users/{uid}/meta/workspace
+//   /users/{uid}/auditLogs/{id}
+//   /aiConversations/{id}
+//   /support_messages/{id}
+//   /aiUsageLogs/{id}
 //
-// Deploy with: firebase deploy --only firestore:rules
+// Bootstrap first superadmin manually in Firebase Console:
+//   users/{your-uid} → role: "superadmin"
+//
+// Deploy: firebase deploy --only firestore:rules
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // The single super-admin email that controls the whole system.
-    function superAdminEmail() {
-      return 'usamaawol0@gmail.com';
-    }
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
     function isSignedIn() {
       return request.auth != null;
     }
-    function isSuperAdmin() {
-      return isSignedIn()
-             && request.auth.token.email != null
-             && request.auth.token.email.lower() == superAdminEmail();
-    }
+
     function isOwner(userId) {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    // -------- User profiles --------
-    // Each user manages their own profile; super-admin can read all and manage roles.
+    // Safe superadmin check — reads caller's OWN document (isOwner path),
+    // so it does NOT create a recursive permission dependency.
+    function isSuperAdmin() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'superadmin'
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('disabled', false) == false;
+    }
+
+    function callerDisabled() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('disabled', false) == true;
+    }
+
+    function isAssignableRole(role) {
+      return role in ['superadmin', 'admin', 'librarian', 'assistant', 'user'];
+    }
+
+    function isSelfAssignableRole(role) {
+      return role in ['admin', 'librarian', 'assistant', 'user'];
+    }
+
+    // On create: user may not set their own role to superadmin
+    function validSelfRoleOnCreate() {
+      return !('role' in request.resource.data)
+        || isSelfAssignableRole(request.resource.data.role);
+    }
+
+    // On update: user may not change their own role
+    function roleUnchangedOnSelfUpdate() {
+      return !('role' in request.resource.data)
+        || request.resource.data.role == resource.data.role;
+    }
+
+    // ── User profiles ─────────────────────────────────────────────────────────
     match /users/{userId} {
+      // Any signed-in user reads their own profile.
+      // Superadmin reads ANY user's profile (for user management).
       allow read: if isOwner(userId) || isSuperAdmin();
-      allow create, update: if isOwner(userId) || isSuperAdmin();
+
+      // New user creating their own profile — cannot self-assign superadmin.
+      allow create: if isOwner(userId)
+        && !callerDisabled()
+        && validSelfRoleOnCreate()
+        && (!('disabled' in request.resource.data) || request.resource.data.disabled == false);
+
+      // User updates own profile (cannot change role or disabled status).
+      // Superadmin can update any profile including role and disabled fields.
+      allow update: if (
+        isOwner(userId)
+        && !callerDisabled()
+        && roleUnchangedOnSelfUpdate()
+        && (!('disabled' in request.resource.data) || request.resource.data.disabled == resource.data.get('disabled', false))
+      ) || isSuperAdmin();
+
+      // Only superadmin can delete user profiles.
       allow delete: if isSuperAdmin();
 
-      // Per-user workspace data (borrows, reservations, notifications).
+      // ── Per-user subcollections (borrows, reservations, notifications, etc.) ──
       match /{collection}/{docId} {
-        allow read, write: if isOwner(userId);
-        allow read: if isSuperAdmin();
+        // User owns their data; superadmin has full read+write access.
+        allow read, write: if (isOwner(userId) && !callerDisabled()) || isSuperAdmin();
       }
     }
 
-    // -------- AI conversations --------
-    // Strictly isolated per user; super-admin may read all for monitoring.
+    // ── AI conversations ──────────────────────────────────────────────────────
     match /aiConversations/{convId} {
-      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
-      allow read, update, delete: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow read: if isSuperAdmin();
+      allow create: if isSignedIn()
+        && !callerDisabled()
+        && request.resource.data.userId == request.auth.uid;
+      allow read, update, delete: if (
+        isSignedIn()
+        && !callerDisabled()
+        && resource.data.userId == request.auth.uid
+      ) || isSuperAdmin();
 
       match /messages/{msgId} {
-        allow read, write: if isSignedIn()
-          && get(/databases/$(database)/documents/aiConversations/$(convId)).data.userId == request.auth.uid;
-        allow read: if isSuperAdmin();
+        allow read, write: if (
+          isSignedIn()
+          && !callerDisabled()
+          && get(/databases/$(database)/documents/aiConversations/$(convId)).data.userId == request.auth.uid
+        ) || isSuperAdmin();
       }
     }
 
-    // -------- Audit logs --------
-    // Users may append their own entries; only super-admin reads them.
+    // ── Global audit logs (legacy top-level collection) ───────────────────────
     match /auditLogs/{id} {
-      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn()
+        && !callerDisabled()
+        && request.resource.data.userId == request.auth.uid;
       allow read: if isSuperAdmin();
       allow update, delete: if false;
     }
 
-    // -------- Support / contact messages --------
+    // ── AI usage logs ─────────────────────────────────────────────────────────
+    match /aiUsageLogs/{id} {
+      allow create: if isSignedIn() && !callerDisabled();
+      allow read: if (
+        isSignedIn()
+        && resource.data.userId == request.auth.uid
+      ) || isSuperAdmin();
+      allow update, delete: if false;
+    }
+
+    // ── Support inbox ─────────────────────────────────────────────────────────
     match /support_messages/{id} {
       allow create: if isSignedIn()
-                    && request.resource.data.message is string
-                    && request.resource.data.message.size() > 0
-                    && request.resource.data.message.size() <= 5000;
+        && !callerDisabled()
+        && request.resource.data.message is string
+        && request.resource.data.message.size() > 0
+        && request.resource.data.message.size() <= 5000;
       allow read, update, delete: if isSuperAdmin();
     }
 
-    // Deny everything else by default.
+    // ── Deny everything else ──────────────────────────────────────────────────
     match /{document=**} {
       allow read, write: if false;
     }

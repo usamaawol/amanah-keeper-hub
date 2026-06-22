@@ -1,10 +1,21 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { BookMarked, Bookmark, CalendarCheck, Sparkles, TriangleAlert, Users } from "lucide-react";
+import {
+  BookMarked,
+  Bookmark,
+  CalendarCheck,
+  Inbox,
+  Settings,
+  ShieldCheck,
+  Sparkles,
+  TriangleAlert,
+  Users,
+} from "lucide-react";
 import { PageHeader } from "@/components/ui-bits";
 import { StatusBadge } from "@/components/ui-bits";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import { useI18n } from "@/lib/i18n";
 import { useAuth } from "@/lib/auth";
 import {
@@ -16,6 +27,7 @@ import {
   useBorrows,
   useReservations,
 } from "@/lib/store";
+import { listAllUsers } from "@/lib/user-profile";
 
 export const Route = createFileRoute("/app/dashboard")({
   head: () => ({ meta: [{ title: "Dashboard — Amanah Library System" }] }),
@@ -24,15 +36,23 @@ export const Route = createFileRoute("/app/dashboard")({
 
 function Dashboard() {
   const { t, lang } = useI18n();
-  const { user } = useAuth();
+  const { user, isSuperAdmin, loading: authLoading } = useAuth();
   const libId = user?.libraryId ?? null;
   const { data: borrows = [] } = useBorrows(libId);
   const { data: reservations = [] } = useReservations(libId);
   const [q, setQ] = useState("");
+  const [totalUsers, setTotalUsers] = useState<number | null>(null);
 
   useEffect(() => {
     if (libId && borrows.length) syncSmartNotifications(libId, borrows);
   }, [libId, borrows]);
+
+  useEffect(() => {
+    if (!isSuperAdmin || authLoading) return;
+    listAllUsers()
+      .then((list) => setTotalUsers(list.length))
+      .catch(() => setTotalUsers(null));
+  }, [isSuperAdmin, authLoading]);
 
   const stats = useMemo(() => {
     const active = borrows.filter((b) => !b.deleted && ["Borrowed", "Reading"].includes(effectiveStatus(b))).length;
@@ -62,10 +82,54 @@ function Dashboard() {
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
     .slice(0, 8);
 
+  const superLinks = [
+    { to: "/app/super", label: t("manageUsers"), icon: ShieldCheck },
+    { to: "/app/inbox", label: t("supportInbox"), icon: Inbox },
+    { to: "/app/readers", label: t("readers"), icon: Users },
+    { to: "/app/settings", label: t("settings"), icon: Settings },
+  ] as const;
+
   return (
     <div>
+      {isSuperAdmin && (
+        <section className="mb-8 rounded-2xl border border-primary/30 bg-gradient-to-br from-primary/10 via-card to-card p-5 md:p-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <ShieldCheck className="size-5 text-primary" />
+                <h2 className="text-lg font-bold">{t("superAdminDashboard")}</h2>
+                <Badge className="bg-primary text-primary-foreground">{t("superAdmin")}</Badge>
+              </div>
+              <p className="max-w-2xl text-sm text-muted-foreground">{t("superAdminWelcome")}</p>
+              {totalUsers !== null && (
+                <p className="text-sm font-medium">
+                  {t("systemOverview")}: {totalUsers} {lang === "ar" ? "مستخدم" : "registered users"}
+                </p>
+              )}
+            </div>
+            <Button asChild className="bg-gradient-primary shrink-0">
+              <Link to="/app/super">
+                <ShieldCheck className="size-4" /> {t("superAdmin")}
+              </Link>
+            </Button>
+          </div>
+          <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {superLinks.map((link) => (
+              <Link
+                key={link.to}
+                to={link.to}
+                className="flex flex-col items-center gap-2 rounded-xl border border-border/80 bg-background/60 p-3 text-center text-xs font-medium transition-colors hover:border-primary hover:bg-primary/5"
+              >
+                <link.icon className="size-5 text-primary" />
+                {link.label}
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
+
       <PageHeader
-        title={`${t("dashboard")} · ${user?.libraryName ?? ""}`}
+        title={`${isSuperAdmin ? t("superAdminDashboard") : t("dashboard")} · ${user?.libraryName ?? ""}`}
         action={
           <Button asChild className="bg-gradient-primary">
             <Link to="/app/ai">

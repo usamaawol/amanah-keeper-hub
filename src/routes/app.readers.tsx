@@ -12,9 +12,11 @@ export const Route = createFileRoute("/app/readers")({
 
 function Readers() {
   const { t } = useI18n();
-  const { user, isSuperAdmin } = useAuth();
-  const { data: borrows = [] } = useBorrows(user!.libraryId!);
+  const { user, isSuperAdmin, loading } = useAuth();
+  const { data: borrows = [] } = useBorrows(user?.libraryId ?? null);
   const readers = computeReaders(borrows.filter(b => !b.deleted));
+
+  if (loading) return null;
 
   if (!isSuperAdmin) {
     return (

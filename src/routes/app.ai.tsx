@@ -8,7 +8,6 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import { useI18n } from "@/lib/i18n";
 import { useAuth } from "@/lib/auth";
 import { useBorrows, useReservations, useOnline } from "@/lib/store";
-import { getSettings } from "@/lib/settings";
 import { askLibraryAI } from "@/lib/ai";
 import { logAudit } from "@/lib/audit";
 import {
@@ -42,9 +41,6 @@ function AI() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
-
-  const settings = getSettings();
-  const hasKey = !!settings.openRouterKey.trim();
 
   // Load cached conversations for this user (works offline).
   useEffect(() => {
@@ -102,10 +98,22 @@ function AI() {
     refresh();
 
     try {
+      // Optionally attach the Firebase ID token for server-side auth verification.
+      // Falls back silently when Firebase Auth is not initialised (offline/demo mode).
+      let idToken: string | undefined;
+      try {
+        const { getAuth } = await import("firebase/auth");
+        const currentUser = getAuth().currentUser;
+        if (currentUser) idToken = await currentUser.getIdToken();
+      } catch {
+        // Firebase unavailable — server function accepts unauthenticated calls
+        // and relies on rate limiting as a secondary protection.
+      }
+
       const answer = await askLibraryAI({
         question,
-        apiKey: settings.openRouterKey,
-        model: settings.aiModel,
+        userId: user.uid,
+        idToken,
         borrows: borrows.filter(b => !b.deleted),
         reservations,
         history: messages.map((m) => ({ role: m.role, content: m.content })),
@@ -116,7 +124,16 @@ function AI() {
       refresh();
     } catch (e) {
       console.error(e);
-      setMessages((m) => [...m, { role: "assistant", content: t("aiError") }]);
+      // Surface specific error types to the user
+      const msg = e instanceof Error ? e.message : "";
+      const userMsg = msg.includes("RATE_LIMITED")
+        ? t("aiRateLimited")
+        : msg.includes("AI_TIMEOUT")
+          ? t("aiTimeout")
+          : msg.includes("AI_NOT_CONFIGURED")
+            ? t("aiNotConfigured")
+            : t("aiError");
+      setMessages((m) => [...m, { role: "assistant", content: userMsg }]);
     } finally {
       setLoading(false);
       requestAnimationFrame(() => endRef.current?.scrollIntoView({ behavior: "smooth" }));
@@ -210,9 +227,6 @@ function AI() {
                 <Sparkles className="size-7" />
               </div>
               <p className="mt-4 text-sm leading-relaxed text-muted-foreground">{t("aiIntro")}</p>
-              {!hasKey && (
-                <p className="mt-3 text-xs font-medium text-destructive">{t("aiNeedsKey")}</p>
-              )}
               {!online && (
                 <p className="mt-2 text-xs text-muted-foreground">{t("aiNeedsInternet")}</p>
               )}
@@ -263,7 +277,7 @@ function AI() {
             size="icon"
             disabled={loading || !input.trim() || !online}
             aria-label={t("aiSend")}
-            title={!online ? t("aiNeedsInternet") : !hasKey ? t("aiNeedsKey") : t("aiSend")}
+            title={!online ? t("aiNeedsInternet") : t("aiSend")}
           >
             <Send className="size-4" />
           </Button>

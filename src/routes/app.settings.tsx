@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { CheckCircle2, Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, MessageSquare } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/ui-bits";
@@ -11,9 +11,9 @@ import { useI18n } from "@/lib/i18n";
 import { useTheme } from "@/lib/theme";
 import { useAuth } from "@/lib/auth";
 import { getSettings, saveSettings } from "@/lib/settings";
-import { seedDemoData } from "@/lib/seed";
-import { useQueryClient } from "@tanstack/react-query";
-import { pushUserProfileToCloud } from "@/lib/sync";
+
+import { pushUserProfileToCloud } from "@/lib/sync-client";
+import { sendSupportMessage } from "@/lib/support";
 
 export const Route = createFileRoute("/app/settings")({
   head: () => ({ meta: [{ title: "Settings — Amanah Library System" }] }),
@@ -24,12 +24,15 @@ function Settings() {
   const { t, lang, setLang } = useI18n();
   const { theme, setTheme } = useTheme();
   const { user, isSuperAdmin, updateAccount } = useAuth();
-  const qc = useQueryClient();
   const [s, setS] = useState(getSettings());
 
   const [displayName, setDisplayName] = useState(user?.displayName ?? "");
   const [libName, setLibName] = useState(user?.libraryName ?? "");
   const [showSavedPassword, setShowSavedPassword] = useState(false);
+
+  // Contact Admin state
+  const [adminMsg, setAdminMsg] = useState("");
+  const [isSending, setIsSending] = useState(false);
 
   const saveProfile = async () => {
     await updateAccount({ displayName, libraryName: libName });
@@ -39,28 +42,33 @@ function Settings() {
   const save = async () => {
     saveSettings(s);
     if (user?.uid) {
-      await pushUserProfileToCloud(user.uid, user.libraryName || s.libraryName, {
-        openRouterKey: s.openRouterKey,
-        aiModel: s.aiModel,
-      });
+      await pushUserProfileToCloud(user.uid, user.libraryName || s.libraryName, {});
     }
     toast.success(t("saved"));
   };
 
-  const seed = async () => {
-    await seedDemoData(user!.libraryId!);
-    qc.invalidateQueries();
-    toast.success(t("saved"));
+  const handleContactAdmin = async () => {
+    if (!adminMsg.trim()) return;
+    setIsSending(true);
+    try {
+      // Use the centralized sendSupportMessage function
+      await sendSupportMessage({
+        name: user?.displayName ?? "Librarian",
+        email: user?.email ?? "",
+        category: "question",
+        message: adminMsg.trim(),
+        fromUid: user?.uid ?? null,
+        libraryName: user?.libraryName ?? null,
+      });
+      toast.success(t("messageSent"));
+      setAdminMsg("");
+    } catch (err) {
+      console.error(err);
+      toast.error(t("messageError"));
+    } finally {
+      setIsSending(false);
+    }
   };
-
-  const setupItems: { key: Parameters<typeof t>[0]; required: boolean }[] = [
-    { key: "setupFirebaseProject", required: true },
-    { key: "setupFirebaseAuth", required: true },
-    { key: "setupFirestore", required: true },
-    { key: "setupEnvVars", required: true },
-    { key: "setupOpenRouter", required: false },
-    { key: "setupFutureAi", required: false },
-  ];
 
   return (
     <div className="max-w-2xl space-y-5">
@@ -122,29 +130,27 @@ function Settings() {
       </section>
 
 
-
-      {isSuperAdmin && (
-      <section className="space-y-4 rounded-2xl border border-border bg-card p-5">
-        <h2 className="font-semibold">{t("setupTitle")}</h2>
-        <p className="text-sm text-muted-foreground">{t("setupIntro")}</p>
-        <ul className="space-y-2">
-          {setupItems.map((it) => (
-            <li key={it.key} className="flex items-center gap-3 rounded-lg border border-border/60 bg-background/50 px-3 py-2.5">
-              <CheckCircle2 className="size-4 shrink-0 text-primary" />
-              <span className="flex-1 text-sm">{t(it.key)}</span>
-              <span
-                className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                  it.required ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"
-                }`}
-              >
-                {it.required ? t("setupRequired") : t("setupOptional")}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </section>
+      {!isSuperAdmin && (
+        <section className="space-y-4 rounded-2xl border border-border bg-card p-5">
+          <h2 className="font-semibold">{t("contactAdmin")}</h2>
+          <div className="space-y-1.5">
+            <Textarea
+              value={adminMsg}
+              onChange={(e) => setAdminMsg(e.target.value)}
+              placeholder={t("messagePlaceholder")}
+              rows={3}
+            />
+          </div>
+          <Button 
+            onClick={handleContactAdmin} 
+            disabled={isSending || !adminMsg.trim()} 
+            className="bg-gradient-primary gap-2"
+          >
+            <MessageSquare className="size-4" />
+            {isSending ? t("loading") : t("sendMessage")}
+          </Button>
+        </section>
       )}
-
 
       <section className="space-y-4 rounded-2xl border border-border bg-card p-5">
         <h2 className="font-semibold">{t("appearance")}</h2>
@@ -174,45 +180,6 @@ function Settings() {
           </div>
         </div>
       </section>
-
-      {isSuperAdmin && (
-      <>
-
-      <section className="space-y-4 rounded-2xl border border-border bg-card p-5">
-        <h2 className="font-semibold">{t("aiAssistant")}</h2>
-        <div className="space-y-1.5">
-          <Label>{t("apiKeyLabel")}</Label>
-          <Input type="password" value={s.openRouterKey} onChange={(e) => setS({ ...s, openRouterKey: e.target.value })} placeholder="sk-or-..." />
-        </div>
-        <div className="space-y-1.5">
-          <Label>{t("apiModelLabel")}</Label>
-          <Input value={s.aiModel} onChange={(e) => setS({ ...s, aiModel: e.target.value })} placeholder="openai/gpt-4o-mini" />
-        </div>
-      </section>
-
-      <section className="space-y-4 rounded-2xl border border-border bg-card p-5">
-        <h2 className="font-semibold">{t("libraryName")} & Firebase</h2>
-        <div className="space-y-1.5">
-          <Label>{t("libraryName")}</Label>
-          <Input value={s.libraryName} onChange={(e) => setS({ ...s, libraryName: e.target.value })} />
-        </div>
-        <div className="space-y-1.5">
-          <Label>{t("firebaseLabel")}</Label>
-          <Textarea rows={4} value={s.firebaseConfig} onChange={(e) => setS({ ...s, firebaseConfig: e.target.value })} placeholder='{"apiKey":"...","authDomain":"...","projectId":"..."}' />
-          <p className="text-xs text-muted-foreground">{t("envNote")}</p>
-        </div>
-      </section>
-
-      <div className="flex flex-wrap gap-2">
-        <Button onClick={save} className="bg-gradient-primary">
-          {t("save")}
-        </Button>
-        <Button onClick={seed} variant="outline">
-          {t("seedDemo")}
-        </Button>
-      </div>
-      </>
-      )}
     </div>
   );
 }

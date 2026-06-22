@@ -4,10 +4,13 @@ import {
   Bell,
   BookMarked,
   Bookmark,
+  CheckCircle2,
+  CloudOff,
   Download,
   History,
   Inbox,
   LayoutDashboard,
+  Loader2,
   LogOut,
   Mail,
   Menu,
@@ -16,7 +19,6 @@ import {
   ShieldCheck,
   Sparkles,
   Users,
-  Wifi,
   WifiOff,
 } from "lucide-react";
 import { Logo } from "./Logo";
@@ -30,8 +32,19 @@ import {
 } from "@/components/ui/avatar";
 import { useI18n } from "@/lib/i18n";
 import { useAuth } from "@/lib/auth";
-import { useOnline } from "@/lib/store";
+import { useOnline, usePendingCount } from "@/lib/store";
 import { usePwaInstall } from "@/hooks/use-pwa-install";
+import {
+  getLastSyncedAt,
+  runBackgroundSync,
+  startRealtimeSync,
+  stopRealtimeSync,
+  useSyncStatus,
+} from "@/lib/sync-client";
+import { useQueryClient } from "@tanstack/react-query";
+import { canAccessLibrary } from "@/lib/roles";
+import { pushSettingsToCloud } from "@/lib/cloud-push";
+import { getSettings } from "@/lib/settings";
 
 function VerificationPendingScreen() {
   const { t, lang } = useI18n();
@@ -115,29 +128,101 @@ function VerificationPendingScreen() {
 
 export function AdminLayout({ children }: { children: ReactNode }) {
   const { t } = useI18n();
-  const { user, loading, signOut, isSuperAdmin } = useAuth();
+  const { user, loading, profileLoaded, signOut, isSuperAdmin } = useAuth();
   const navigate = useNavigate();
   const online = useOnline();
+  const syncStatus = useSyncStatus();
+  const pendingCount = usePendingCount();
+  const queryClient = useQueryClient();
   const path = useRouterState({ select: (s) => s.location.pathname });
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { canInstall, install } = usePwaInstall();
 
+  // ── Start real-time sync once we have a valid authenticated user ──────────
   useEffect(() => {
-    if (!loading && (!user || user.role !== "admin")) {
+    if (!user?.libraryId || !user?.uid) return;
+    let cancelled = false;
+    void startRealtimeSync(
+      user.libraryId,
+      user.uid,
+      (queryKey) => queryClient.invalidateQueries({ queryKey }),
+    ).then(() => {
+      if (!cancelled) void runBackgroundSync(user.libraryId!, user.uid, true);
+    });
+    return () => {
+      cancelled = true;
+      void stopRealtimeSync();
+    };
+  // Re-run only when the user identity changes (login / account switch)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid, user?.libraryId]);
+
+  // ── Sync local settings changes to cloud ──────────────────────────────────
+  useEffect(() => {
+    if (!user?.uid || !user?.libraryName) return;
+    const handler = () => {
+      const s = getSettings();
+      pushSettingsToCloud(user.uid, {
+        libraryName: user.libraryName!,
+        language: s.language,
+        theme: s.theme,
+        displayName: user.displayName,
+        updatedAt: s.updatedAt ?? new Date().toISOString(),
+      });
+    };
+    window.addEventListener("amanah-settings-changed", handler);
+    return () => window.removeEventListener("amanah-settings-changed", handler);
+  }, [user?.uid, user?.libraryName, user?.displayName]);
+
+  // ── Auto-flush + background sync when connectivity returns or tab refocuses ─
+  useEffect(() => {
+    if (!user?.uid || !user?.libraryId) return;
+
+    const syncNow = () => {
+      if (!navigator.onLine) return;
+      void runBackgroundSync(user.libraryId!, user.uid, true).then(() => {
+        queryClient.invalidateQueries({ queryKey: ["borrows", user.libraryId] });
+        queryClient.invalidateQueries({ queryKey: ["reservations", user.libraryId] });
+        queryClient.invalidateQueries({ queryKey: ["notifications", user.libraryId] });
+      });
+    };
+
+    if (online) {
+      const timer = setTimeout(syncNow, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [online, user?.uid, user?.libraryId, queryClient]);
+
+  useEffect(() => {
+    if (!user?.libraryId || !user?.uid) return;
+    const onVisible = () => {
+      if (document.visibilityState === "visible" && navigator.onLine) {
+        void runBackgroundSync(user.libraryId!, user.uid, true);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [user?.libraryId, user?.uid]);
+
+  useEffect(() => {
+    if (!loading && profileLoaded && (!user || !canAccessLibrary(user.role, user.disabled))) {
       navigate({ to: "/login" });
     }
-  }, [loading, user, navigate]);
+  }, [loading, profileLoaded, user, navigate]);
 
-  if (loading || !user || user.role !== "admin") {
+  if (loading || !profileLoaded || !user || !canAccessLibrary(user.role, user.disabled)) {
     return (
       <div className="grid min-h-screen place-items-center bg-background text-muted-foreground">
-        {t("loading")}
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="size-8 animate-spin text-primary" />
+          <p className="text-sm font-medium">{t("loading")}</p>
+        </div>
       </div>
     );
   }
 
-  // Check if email needs verification (only for email/password users, offline mode is always verified)
-  const needsVerification = !user.emailVerified;
+  // Block verification screen when offline — library must work fully offline
+  const needsVerification = online && !user.emailVerified;
 
   if (needsVerification) {
     return <VerificationPendingScreen />;
@@ -198,12 +283,11 @@ export function AdminLayout({ children }: { children: ReactNode }) {
             <Avatar className="size-8">
               {user.photoURL && <AvatarImage src={user.photoURL} />}
               <AvatarFallback className="bg-sidebar-primary text-sidebar-primary-foreground text-xs">
-                {user.displayName.slice(0, 2).toUpperCase()}
+                {(user.displayName || user.email || "AK").slice(0, 2).toUpperCase()}
               </AvatarFallback>
             </Avatar>
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold">{user.libraryName}</p>
-              <p className="truncate text-xs text-sidebar-foreground/60">{user.email}</p>
             </div>
           </div>
         </div>
@@ -216,14 +300,47 @@ export function AdminLayout({ children }: { children: ReactNode }) {
             <Logo />
           </div>
           <div className="ms-auto flex items-center gap-1">
-            <span
-              className={`hidden items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold sm:flex ${
-                online ? "bg-success/15 text-success" : "bg-muted text-muted-foreground"
-              }`}
-            >
-              {online ? <Wifi className="size-3.5" /> : <WifiOff className="size-3.5" />}
-              {online ? t("online") : t("offline")}
-            </span>
+            {/* Sync status indicator */}
+            {!online ? (
+              <span className="hidden items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs font-semibold text-muted-foreground sm:flex">
+                <WifiOff className="size-3.5" />
+                {t("offline")}
+                {pendingCount > 0 && (
+                  <span className="ml-1 rounded-full bg-amber-500 px-1.5 py-0 text-[10px] font-bold text-white">
+                    {pendingCount}
+                  </span>
+                )}
+              </span>
+            ) : syncStatus === "syncing" ? (
+              <span className="hidden items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary sm:flex">
+                <Loader2 className="size-3.5 animate-spin" />
+                {t("syncing")}
+              </span>
+            ) : syncStatus === "synced" ? (
+              <button
+                type="button"
+                onClick={() => user?.libraryId && user?.uid && runBackgroundSync(user.libraryId, user.uid, true)}
+                className="hidden items-center gap-1.5 rounded-full bg-success/15 px-2.5 py-1 text-xs font-semibold text-success sm:flex"
+                title={
+                  getLastSyncedAt()
+                    ? `${t("lastSynced")}: ${new Date(getLastSyncedAt()!).toLocaleString()}`
+                    : t("synced")
+                }
+              >
+                <CheckCircle2 className="size-3.5" />
+                {t("synced")}
+                {pendingCount > 0 && (
+                  <span className="ml-0.5 rounded-full bg-amber-500 px-1.5 py-0 text-[10px] font-bold text-white">
+                    {pendingCount}
+                  </span>
+                )}
+              </button>
+            ) : (
+              <span className="hidden items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs font-semibold text-muted-foreground sm:flex">
+                <CloudOff className="size-3.5" />
+                {t("offline")}
+              </span>
+            )}
             {canInstall && (
               <Button
                 variant="outline"

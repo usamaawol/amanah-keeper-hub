@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
-import { ChevronDown, ChevronUp, Eye, EyeOff, History, Trash2 } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { useMemo, useState, useEffect } from "react";
+import { ChevronDown, ChevronUp, Eye, EyeOff, History, Pencil, Trash2 } from "lucide-react";
 import { PageHeader, StatusBadge, EmptyState } from "@/components/ui-bits";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -21,40 +22,36 @@ export const Route = createFileRoute("/app/history")({
   component: HistoryPage,
 });
 
-// Persist show/hide preference in localStorage
-const HIDDEN_KEY = "amanah-history-hidden";
-
-function loadHidden(): Set<string> {
-  try {
-    const raw = localStorage.getItem(HIDDEN_KEY);
-    if (raw) return new Set(JSON.parse(raw) as string[]);
-  } catch { /* ignore */ }
-  return new Set();
-}
-
-function saveHidden(set: Set<string>) {
-  localStorage.setItem(HIDDEN_KEY, JSON.stringify([...set]));
-}
+import { getWorkspaceMeta, setHistoryHidden } from "@/lib/user-meta";
 
 function HistoryPage() {
   const { t, lang } = useI18n();
   const { user, isSuperAdmin } = useAuth();
+  const uid = user!.uid;
   const { data: borrows = [] } = useBorrows(user!.libraryId!);
   const deleteBorrow = useDeleteBorrow(user!.libraryId!);
   const [q, setQ] = useState("");
   const [showReturned, setShowReturned] = useState(true);
   const [showBorrowed, setShowBorrowed] = useState(true);
-  const [hiddenIds, setHiddenIds] = useState<Set<string>>(loadHidden);
+  const [hiddenIds, setHiddenIds] = useState<Set<string>>(
+    () => new Set(getWorkspaceMeta(uid).historyHidden),
+  );
   const [collapsed, setCollapsed] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [recordToDelete, setRecordToDelete] = useState<string | null>(null);
+
+  useEffect(() => {
+    const onMeta = () => setHiddenIds(new Set(getWorkspaceMeta(uid).historyHidden));
+    window.addEventListener("amanah-meta-changed", onMeta);
+    return () => window.removeEventListener("amanah-meta-changed", onMeta);
+  }, [uid]);
 
   const toggleHidden = (eventKey: string) => {
     setHiddenIds((prev) => {
       const next = new Set(prev);
       if (next.has(eventKey)) next.delete(eventKey);
       else next.add(eventKey);
-      saveHidden(next);
+      setHistoryHidden(uid, next);
       return next;
     });
   };
@@ -163,8 +160,9 @@ function HistoryPage() {
             <button
               className="text-primary underline underline-offset-2"
               onClick={() => {
-                setHiddenIds(new Set());
-                saveHidden(new Set());
+                const empty = new Set<string>();
+                setHiddenIds(empty);
+                setHistoryHidden(uid, empty);
               }}
             >
               Show all
@@ -203,6 +201,19 @@ function HistoryPage() {
                   </p>
                   <div className="flex items-center gap-1.5">
                     <StatusBadge status={e.status} />
+                    {!e.deleted && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
+                        asChild
+                      >
+                        <Link to="/app/borrow/edit" search={{ id: e.borrowId }}>
+                          <Pencil className="size-3" />
+                          {t("edit")}
+                        </Link>
+                      </Button>
+                    )}
                     <button
                       onClick={() => toggleHidden(e.key)}
                       title="Hide this entry"
@@ -244,7 +255,7 @@ function HistoryPage() {
                     className="ms-auto text-xs text-primary underline underline-offset-2"
                     onClick={() => {
                       setHiddenIds(new Set());
-                      saveHidden(new Set());
+                      setHistoryHidden(uid, new Set());
                     }}
                   >
                     Show all

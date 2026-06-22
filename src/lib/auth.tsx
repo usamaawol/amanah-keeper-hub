@@ -10,18 +10,28 @@ import {
 import type { AppUser } from "./types";
 import { getSettings, saveSettings } from "./settings";
 import { logAudit } from "./audit";
-import { syncFromCloud, pushAllToCloud, pushUserProfileToCloud, fetchUserProfileFromCloud } from "./sync";
+import {
+  pushAllToCloud,
+  pushUserProfileToCloud,
+  stopRealtimeSync,
+} from "./sync-client";
+import {
+  canAccessLibrary,
+  canAccessSuperAdminFeatures,
+  DEFAULT_LIBRARY_ROLE,
+  normalizeRole,
+  ROLES,
+  type UserRole,
+} from "./roles";
+import {
+  ensureUserProfile,
+  fetchUserProfile,
+  type FirestoreUserProfile,
+} from "./user-profile";
 
 const USER_KEY = "amanah-user";
 const LIBNAMES_KEY = "amanah-libnames";
-
-export const SUPER_ADMIN_EMAIL =
-  (import.meta.env.VITE_SUPER_ADMIN_EMAIL as string | undefined)?.toLowerCase() ||
-  "usamaawol0@gmail.com";
-
-export function isSuperAdmin(user: AppUser | null): boolean {
-  return !!user && user.email.toLowerCase() === SUPER_ADMIN_EMAIL;
-}
+const DEBUG = import.meta.env.DEV;
 
 export class AccountExistsError extends Error {
   constructor() {
@@ -32,7 +42,11 @@ export class AccountExistsError extends Error {
 
 interface AuthContextValue {
   user: AppUser | null;
+  /** True until Firebase auth + Firestore profile have been resolved. */
   loading: boolean;
+  /** True once Firestore users/{uid} has been read (or offline fallback applied). */
+  profileLoaded: boolean;
+  /** True when Firestore role === superadmin (never from email). */
   isSuperAdmin: boolean;
   signUpWithEmail: (email: string, password: string, libraryName: string) => Promise<void>;
   signInWithEmail: (email: string, password: string) => Promise<void>;
@@ -63,14 +77,32 @@ function readLibNames(): Record<string, string> {
     return {};
   }
 }
+
 function storeLibName(uid: string, name: string) {
   if (typeof window === "undefined" || !name) return;
   const map = readLibNames();
   map[uid] = name;
   localStorage.setItem(LIBNAMES_KEY, JSON.stringify(map));
 }
+
 function getStoredLibName(uid: string): string | null {
   return readLibNames()[uid] ?? null;
+}
+
+/** Normalize legacy or partial sessions restored from localStorage. */
+function normalizeStoredUser(raw: Partial<AppUser> & { uid?: string }): AppUser | null {
+  if (!raw.uid) return null;
+  return {
+    uid: raw.uid,
+    email: raw.email ?? "",
+    displayName: raw.displayName?.trim() || raw.email?.split("@")[0] || "Librarian",
+    photoURL: raw.photoURL ?? null,
+    role: normalizeRole(raw.role),
+    disabled: !!raw.disabled,
+    libraryId: raw.libraryId ?? libraryIdFor(raw.uid),
+    libraryName: raw.libraryName ?? getStoredLibName(raw.uid) ?? "My Library",
+    emailVerified: raw.emailVerified ?? true,
+  };
 }
 
 async function getFirebaseAuth(configJson: string) {
@@ -81,18 +113,25 @@ async function getFirebaseAuth(configJson: string) {
   return getAuth(app);
 }
 
-function userFromFirebase(
-  fu: { uid: string; email: string | null; displayName: string | null; photoURL: string | null; emailVerified: boolean },
-  libraryName: string,
+function appUserFromProfile(
+  fu: {
+    uid: string;
+    email: string | null;
+    displayName: string | null;
+    photoURL: string | null;
+    emailVerified: boolean;
+  },
+  profile: Pick<FirestoreUserProfile, "libraryName" | "role" | "disabled">,
 ): AppUser {
   return {
     uid: fu.uid,
     email: fu.email ?? "",
     displayName: fu.displayName ?? fu.email ?? "Librarian",
     photoURL: fu.photoURL ?? null,
-    role: "admin",
+    role: profile.role,
+    disabled: profile.disabled,
     libraryId: libraryIdFor(fu.uid),
-    libraryName,
+    libraryName: profile.libraryName,
     emailVerified: fu.emailVerified,
   };
 }
@@ -106,80 +145,285 @@ function demoUid(seed: string) {
   return uid;
 }
 
-export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AppUser | null>(null);
-  const [loading, setLoading] = useState(true);
+function logProfileDebug(uid: string, profile: FirestoreUserProfile | null) {
+  if (!DEBUG) return;
+  console.log("Firebase UID:", uid);
+  console.log("Firestore User:", profile);
+  console.log("Role:", profile?.role ?? "(none)");
+  console.log("Disabled:", profile?.disabled ?? false);
+}
 
-  useEffect(() => {
-    // ── Step 1: Restore session from localStorage immediately ───────────────
-    // This works fully offline. The user stays logged in until they click
-    // Sign Out — page reloads, browser restarts, and offline use all keep
-    // the session alive.
-    let restored: AppUser | null = null;
+/**
+ * Read Firestore users/{uid} — never guess role from Firebase Auth.
+ * Creates a profile only when the document does not exist yet.
+ */
+async function resolveProfile(
+  uid: string,
+  email: string,
+  displayName: string | undefined,
+  libraryName: string,
+): Promise<{ libraryName: string; role: UserRole; disabled?: boolean }> {
+  const { firebaseConfig } = getSettings();
+  if (!firebaseConfig.trim()) {
+    return { libraryName, role: DEFAULT_LIBRARY_ROLE, disabled: false };
+  }
+
+  try {
+    const profile = await fetchUserProfile(uid);
+    logProfileDebug(uid, profile);
+
+    if (profile) {
+      return {
+        libraryName: profile.libraryName || libraryName,
+        role: profile.role,
+        disabled: profile.disabled,
+      };
+    }
+
+    // If profile doesn't exist, we try to create it. 
+    // This is where a new user gets their initial role.
+    const newProfile = await ensureUserProfile({ uid, email, displayName, libraryName });
+    logProfileDebug(uid, newProfile);
+    return {
+      libraryName: newProfile.libraryName,
+      role: newProfile.role,
+      disabled: newProfile.disabled,
+    };
+  } catch (e) {
+    console.error("[Auth] resolveProfile failed:", e);
+    // Fallback safely without throwing
+    return { libraryName, role: DEFAULT_LIBRARY_ROLE, disabled: false };
+  }
+}
+
+/** Hydrate AppUser from Firebase Auth + Firestore users/{uid}. */
+async function hydrateFromFirebase(fbUser: {
+  uid: string;
+  email: string | null;
+  displayName: string | null;
+  photoURL: string | null;
+  emailVerified: boolean;
+}): Promise<AppUser | null> {
+  const storedName = getStoredLibName(fbUser.uid);
+  const libraryName =
+    storedName ||
+    (fbUser.displayName ? `${fbUser.displayName}'s Library` : "My Library");
+
+  try {
+    const profile = await resolveProfile(
+      fbUser.uid,
+      fbUser.email ?? "",
+      fbUser.displayName ?? undefined,
+      libraryName,
+    );
+
+    if (profile.disabled) return null;
+    return appUserFromProfile(fbUser, profile);
+  } catch (e) {
+    // If resolveProfile fails (e.g. permission denied), we log and fallback to cached
+    console.error("[Auth] hydrateFromFirebase failed:", e);
+    // Try to get cached user first
     try {
       const raw = localStorage.getItem(USER_KEY);
       if (raw) {
-        restored = JSON.parse(raw) as AppUser;
-        setUser(restored);
-        if (restored.libraryId && restored.uid) {
-          syncFromCloud(restored.libraryId, restored.uid);
+        const cached = normalizeStoredUser(JSON.parse(raw) as Partial<AppUser>);
+        if (cached?.uid === fbUser.uid) {
+          return cached;
         }
       }
     } catch { /* ignore */ }
+    // Fallback safe
+    return appUserFromProfile(fbUser, { 
+      libraryName, 
+      role: DEFAULT_LIBRARY_ROLE, 
+      disabled: false 
+    });
+  }
+}
 
-    // Always unblock the UI after reading localStorage — no need to wait for Firebase.
-    setLoading(false);
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<AppUser | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [profileLoaded, setProfileLoaded] = useState(false);
 
-    // ── Step 2: Optional Firebase auth state listener ───────────────────────
-    // Used ONLY to refresh display name / photo when online.
-    // Firebase is NEVER allowed to sign the user out automatically.
-    // If Firebase reports no user, we ignore it — localStorage wins.
-    const { firebaseConfig } = getSettings();
-    if (!firebaseConfig.trim()) return;
+  const applyUserUpdate = useCallback((next: AppUser | null) => {
+    const normalized = next ? normalizeStoredUser(next) : null;
+    setUser(normalized);
+    persist(normalized);
+  }, []);
 
-    let unsubscribe: (() => void) | undefined;
-    (async () => {
+  // Bootstrap: Firebase Auth → Firestore users/{uid} → global user state
+  useEffect(() => {
+    let cancelled = false;
+    let unsubAuth: (() => void) | undefined;
+    let timeoutId: number | undefined;
+
+    const onAuthChanged = () => {
+      try {
+        const raw = localStorage.getItem(USER_KEY);
+        if (raw) {
+          const restored = normalizeStoredUser(JSON.parse(raw) as Partial<AppUser>);
+          if (restored) setUser(restored);
+        }
+      } catch { /* ignore */ }
+    };
+    window.addEventListener("amanah-auth-changed", onAuthChanged);
+
+    async function bootstrap() {
+      const { firebaseConfig } = getSettings();
+
+      // Offline / demo mode — no Firestore, use cached session only
+      if (!firebaseConfig.trim()) {
+        try {
+          const raw = localStorage.getItem(USER_KEY);
+          if (raw) {
+            const restored = normalizeStoredUser(JSON.parse(raw) as Partial<AppUser>);
+            if (restored && !cancelled) setUser(restored);
+          }
+        } catch { /* ignore */ }
+        if (!cancelled) {
+          setProfileLoaded(true);
+          setLoading(false);
+        }
+        return;
+      }
+
       try {
         const auth = await getFirebaseAuth(firebaseConfig);
         const { onAuthStateChanged } = await import("firebase/auth");
-        unsubscribe = onAuthStateChanged(auth, (fbUser) => {
-          if (!fbUser) return; // Never auto-logout — localStorage session wins
-          const storedName = getStoredLibName(fbUser.uid);
-          const libraryName =
-            storedName ||
-            (fbUser.displayName ? `${fbUser.displayName}'s Library` : "My Library");
-          const refreshed = userFromFirebase(fbUser, libraryName);
-          setUser(refreshed);
-          persist(refreshed);
-          syncFromCloud(refreshed.libraryId!, refreshed.uid);
+
+        unsubAuth = onAuthStateChanged(auth, async (fbUser) => {
+          if (cancelled) return;
+
+          if (!fbUser) {
+            setUser(null);
+            persist(null);
+            setProfileLoaded(true);
+            setLoading(false);
+            return;
+          }
+
+          setLoading(true);
+          setProfileLoaded(false);
+
+          try {
+            if (DEBUG) console.log("Firebase UID:", fbUser.uid);
+            const next = await hydrateFromFirebase(fbUser);
+            if (next) {
+              applyUserUpdate(next);
+            } else {
+              setUser(null);
+              persist(null);
+            }
+          } catch (e) {
+            console.error("[Auth] Firestore profile load failed:", e);
+            // If it's a permission error or similar, fallback to cached user
+            try {
+              const raw = localStorage.getItem(USER_KEY);
+              if (raw) {
+                const cached = normalizeStoredUser(JSON.parse(raw) as Partial<AppUser>);
+                if (cached?.uid === fbUser.uid) {
+                  setUser(cached);
+                  if (DEBUG) console.log("[Auth] Fallback to cached user:", cached.uid);
+                }
+              }
+            } catch { /* ignore */ }
+          } finally {
+            if (!cancelled) {
+              setProfileLoaded(true);
+              setLoading(false);
+            }
+          }
         });
-      } catch {
-        // Firebase unavailable (offline / misconfigured) — localStorage session still works
+      } catch (e) {
+        console.error("[Auth] Firebase init failed:", e);
+        try {
+          const raw = localStorage.getItem(USER_KEY);
+          if (raw) {
+            const restored = normalizeStoredUser(JSON.parse(raw) as Partial<AppUser>);
+            if (restored && !cancelled) setUser(restored);
+          }
+        } catch { /* ignore */ }
+        if (!cancelled) {
+          setProfileLoaded(true);
+          setLoading(false);
+        }
       }
-    })();
+    }
 
-    return () => { if (unsubscribe) unsubscribe(); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    // Add a timeout to prevent hanging indefinitely
+    timeoutId = window.setTimeout(() => {
+      if (!cancelled) {
+        console.warn("[Auth] Bootstrap timeout — stopping loading state");
+        setLoading(false);
+        setProfileLoaded(true);
+      }
+    }, 10000); // 10 second timeout
 
-  const finish = useCallback((next: AppUser) => {
-    const settings = getSettings();
+    void bootstrap();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timeoutId);
+      unsubAuth?.();
+      window.removeEventListener("amanah-auth-changed", onAuthChanged);
+    };
+  }, [applyUserUpdate]);
+
+  const finish = useCallback(async (next: AppUser) => {
+    if (next.disabled || !canAccessLibrary(next.role, next.disabled)) {
+      throw new Error("account-disabled");
+    }
     if (next.libraryName) {
       storeLibName(next.uid, next.libraryName);
       saveSettings({ libraryName: next.libraryName });
-      pushUserProfileToCloud(next.uid, next.libraryName, {
-        openRouterKey: settings.openRouterKey,
-        aiModel: settings.aiModel,
+    }
+    applyUserUpdate(next);
+    setProfileLoaded(true);
+    logAudit(next.uid, "login");
+
+    if (next.uid && next.libraryName) {
+      const s = getSettings();
+      void pushUserProfileToCloud(next.uid, next.libraryName, {
+        language: s.language,
+        theme: s.theme,
+        displayName: next.displayName,
       });
     }
-    setUser(next);
-    persist(next);
-    logAudit(next.uid, "login");
     if (next.libraryId && next.uid) {
-      pushAllToCloud(next.libraryId, next.uid);
-      syncFromCloud(next.libraryId, next.uid);
+      void pushAllToCloud(next.libraryId, next.uid);
     }
-  }, []);
+  }, [applyUserUpdate]);
+
+  const buildUser = useCallback(
+    async (
+      fu: {
+        uid: string;
+        email: string | null;
+        displayName: string | null;
+        photoURL: string | null;
+        emailVerified: boolean;
+      },
+      libraryName: string,
+    ): Promise<AppUser> => {
+      // Show loading state while building user (for sign-in/up flows)
+      setLoading(true);
+      setProfileLoaded(false);
+      try {
+        const profile = await resolveProfile(
+          fu.uid,
+          fu.email ?? "",
+          fu.displayName ?? undefined,
+          libraryName,
+        );
+        return appUserFromProfile(fu, profile);
+      } finally {
+        setProfileLoaded(true);
+        setLoading(false);
+      }
+    },
+    [],
+  );
 
   const signUpWithEmail = useCallback(
     async (email: string, password: string, libraryName: string) => {
@@ -188,11 +432,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (firebaseConfig.trim()) {
         try {
           const auth = await getFirebaseAuth(firebaseConfig);
-          const { createUserWithEmailAndPassword, updateProfile, sendEmailVerification } = await import("firebase/auth");
+          const { createUserWithEmailAndPassword, updateProfile, sendEmailVerification } =
+            await import("firebase/auth");
           const cred = await createUserWithEmailAndPassword(auth, email, password);
           try { await updateProfile(cred.user, { displayName: name }); } catch { /* ignore */ }
           try { await sendEmailVerification(cred.user); } catch { /* ignore */ }
-          finish(userFromFirebase(cred.user, name));
+          const next = await buildUser(cred.user, name);
+          await finish(next);
           return;
         } catch (e) {
           const code = (e as { code?: string })?.code;
@@ -202,9 +448,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       const uid = demoUid(email.toLowerCase());
       if (getStoredLibName(uid)) throw new AccountExistsError();
-      finish({ uid, email, displayName: name, photoURL: null, role: "admin", libraryId: libraryIdFor(uid), libraryName: name, emailVerified: true });
+      await finish({
+        uid,
+        email,
+        displayName: name,
+        photoURL: null,
+        role: DEFAULT_LIBRARY_ROLE,
+        libraryId: libraryIdFor(uid),
+        libraryName: name,
+        emailVerified: true,
+      });
     },
-    [finish],
+    [finish, buildUser],
   );
 
   const signInWithEmail = useCallback(
@@ -215,33 +470,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const auth = await getFirebaseAuth(firebaseConfig);
           const { signInWithEmailAndPassword } = await import("firebase/auth");
           const cred = await signInWithEmailAndPassword(auth, email, password);
-          
-          // Try to get library name from cloud profile first
-           const cloudProfile = await fetchUserProfileFromCloud(cred.user.uid);
-           const name = cloudProfile?.libraryName || 
-                        getStoredLibName(cred.user.uid) || 
-                        cred.user.displayName || 
-                        `${email.split("@")[0]}'s Library`;
-           
-           if (cloudProfile) {
-             saveSettings({
-               libraryName: cloudProfile.libraryName,
-               openRouterKey: cloudProfile.openRouterKey || "",
-               aiModel: cloudProfile.aiModel || "openai/gpt-4o-mini",
-             });
-           }
-           
-           finish(userFromFirebase(cred.user, name));
+          const name =
+            getStoredLibName(cred.user.uid) ||
+            cred.user.displayName ||
+            `${email.split("@")[0]}'s Library`;
+          const next = await buildUser(cred.user, name);
+          if (next.disabled) throw new Error("account-disabled");
+          saveSettings({ libraryName: next.libraryName ?? name });
+          await finish(next);
           return;
         } catch (e) {
+          if ((e as Error).message === "account-disabled") throw e;
           console.error("Firebase sign-in failed, using offline account", e);
         }
       }
       const uid = demoUid(email.toLowerCase());
       const name = getStoredLibName(uid) || `${email.split("@")[0]}'s Library`;
-      finish({ uid, email, displayName: name, photoURL: null, role: "admin", libraryId: libraryIdFor(uid), libraryName: name, emailVerified: true });
+      await finish({
+        uid,
+        email,
+        displayName: name,
+        photoURL: null,
+        role: DEFAULT_LIBRARY_ROLE,
+        libraryId: libraryIdFor(uid),
+        libraryName: name,
+        emailVerified: true,
+      });
     },
-    [finish],
+    [finish, buildUser],
   );
 
   const signInWithGoogle = useCallback(async () => {
@@ -249,49 +505,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (firebaseConfig.trim()) {
       try {
         const auth = await getFirebaseAuth(firebaseConfig);
-        const { GoogleAuthProvider, signInWithPopup, signOut: fbSignOut } = await import("firebase/auth");
-
-        // Clear any cached Firebase session so Google always shows the account picker
+        const { GoogleAuthProvider, signInWithPopup, signOut: fbSignOut } =
+          await import("firebase/auth");
         try { await fbSignOut(auth); } catch { /* ignore */ }
-
         const provider = new GoogleAuthProvider();
-        // Always show the account chooser — even when one account is already signed in
         provider.setCustomParameters({ prompt: "select_account" });
         provider.addScope("email");
         provider.addScope("profile");
-
         const cred = await signInWithPopup(auth, provider);
-        
-        // Try to get library name from cloud profile first
-         const cloudProfile = await fetchUserProfileFromCloud(cred.user.uid);
-         const name = cloudProfile?.libraryName ||
-                      getStoredLibName(cred.user.uid) ||
-                      (cred.user.displayName ? `${cred.user.displayName}'s Library` : "My Library");
-         
-         if (cloudProfile) {
-           saveSettings({
-             libraryName: cloudProfile.libraryName,
-             openRouterKey: cloudProfile.openRouterKey || "",
-             aiModel: cloudProfile.aiModel || "openai/gpt-4o-mini",
-           });
-         }
-         
-         const next = userFromFirebase(cred.user, name);
-        saveSettings({ userDisplayName: next.displayName, userEmail: next.email, userPhotoURL: next.photoURL ?? "" });
-        finish(next);
+        const name =
+          getStoredLibName(cred.user.uid) ||
+          (cred.user.displayName ? `${cred.user.displayName}'s Library` : "My Library");
+        const next = await buildUser(cred.user, name);
+        if (next.disabled) throw new Error("account-disabled");
+        saveSettings({
+          libraryName: next.libraryName ?? name,
+          userDisplayName: next.displayName,
+          userEmail: next.email,
+          userPhotoURL: next.photoURL ?? "",
+        });
+        await finish(next);
         return;
       } catch (e) {
         const code = (e as { code?: string })?.code;
-        // User dismissed the picker — not an error
         if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") return;
+        if ((e as Error).message === "account-disabled") throw e;
         console.error("Firebase Google sign-in failed, using offline account", e);
       }
     }
-    // Offline / demo fallback
     const uid = demoUid("google");
     const name = getStoredLibName(uid) || "My Library";
-    finish({ uid, email: "librarian@amanah.demo", displayName: "Demo Librarian", photoURL: null, role: "admin", libraryId: libraryIdFor(uid), libraryName: name, emailVerified: true });
-  }, [finish]);
+    await finish({
+      uid,
+      email: "librarian@amanah.demo",
+      displayName: "Demo Librarian",
+      photoURL: null,
+      role: DEFAULT_LIBRARY_ROLE,
+      libraryId: libraryIdFor(uid),
+      libraryName: name,
+      emailVerified: true,
+    });
+  }, [finish, buildUser]);
 
   const resendVerificationEmail = useCallback(async () => {
     const { firebaseConfig } = getSettings();
@@ -299,10 +553,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         const auth = await getFirebaseAuth(firebaseConfig);
         const { sendEmailVerification } = await import("firebase/auth");
-        const currentUser = auth.currentUser;
-        if (currentUser) {
-          await sendEmailVerification(currentUser);
-        }
+        if (auth.currentUser) await sendEmailVerification(auth.currentUser);
       } catch (e) {
         console.error("Failed to resend verification email", e);
       }
@@ -311,22 +562,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const refreshUser = useCallback(async () => {
     const { firebaseConfig } = getSettings();
-    if (firebaseConfig.trim() && user) {
-      try {
-        const auth = await getFirebaseAuth(firebaseConfig);
-        const currentUser = auth.currentUser;
-        if (currentUser) {
-          await currentUser.reload();
-          const name = getStoredLibName(currentUser.uid) || currentUser.displayName || `${currentUser.email?.split("@")[0]}'s Library`;
-          const refreshed = userFromFirebase(currentUser, name);
-          setUser(refreshed);
-          persist(refreshed);
-        }
-      } catch (e) {
-        console.error("Failed to refresh user", e);
-      }
+    if (!firebaseConfig.trim() || !user) return;
+    try {
+      const auth = await getFirebaseAuth(firebaseConfig);
+      const currentUser = auth.currentUser;
+      if (!currentUser) return;
+      await currentUser.reload();
+      const next = await hydrateFromFirebase(currentUser);
+      if (next) applyUserUpdate(next);
+    } catch (e) {
+      console.error("Failed to refresh user", e);
     }
-  }, [user]);
+  }, [user, applyUserUpdate]);
 
   const updateAccount = useCallback(
     async (changes: { displayName?: string; libraryName?: string }) => {
@@ -346,11 +593,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
 
       if (updatedUser) {
-        const settings = getSettings();
-        pushUserProfileToCloud((updatedUser as AppUser).uid, (updatedUser as AppUser).libraryName || "", {
-          openRouterKey: settings.openRouterKey,
-          aiModel: settings.aiModel,
-        });
+        const s = getSettings();
+        void pushUserProfileToCloud(
+          (updatedUser as AppUser).uid,
+          (updatedUser as AppUser).libraryName || "",
+          {
+            language: s.language,
+            theme: s.theme,
+            displayName: (updatedUser as AppUser).displayName,
+          },
+        );
       }
 
       const { firebaseConfig } = getSettings();
@@ -369,6 +621,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     if (user?.uid) logAudit(user.uid, "logout");
+    void stopRealtimeSync();
     const { firebaseConfig } = getSettings();
     if (firebaseConfig.trim()) {
       try {
@@ -376,13 +629,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await fbSignOut(getAuth());
       } catch { /* ignore */ }
     }
-    setUser(null);
-    persist(null);
-  }, [user]);
+    applyUserUpdate(null);
+    setProfileLoaded(true);
+    setLoading(false);
+  }, [user, applyUserUpdate]);
+
+  const isSuperAdmin = canAccessSuperAdminFeatures(user?.role, user?.disabled);
 
   const value = useMemo(
-    () => ({ user, loading, isSuperAdmin: isSuperAdmin(user), signUpWithEmail, signInWithEmail, signInWithGoogle, updateAccount, signOut, resendVerificationEmail, refreshUser }),
-    [user, loading, signUpWithEmail, signInWithEmail, signInWithGoogle, updateAccount, signOut, resendVerificationEmail, refreshUser],
+    () => ({
+      user,
+      loading,
+      profileLoaded,
+      isSuperAdmin,
+      signUpWithEmail,
+      signInWithEmail,
+      signInWithGoogle,
+      updateAccount,
+      signOut,
+      resendVerificationEmail,
+      refreshUser,
+    }),
+    [
+      user,
+      loading,
+      profileLoaded,
+      isSuperAdmin,
+      signUpWithEmail,
+      signInWithEmail,
+      signInWithGoogle,
+      updateAccount,
+      signOut,
+      resendVerificationEmail,
+      refreshUser,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -393,3 +673,10 @@ export function useAuth() {
   if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
 }
+
+/** @deprecated Use useAuth().isSuperAdmin — role comes from Firestore, not email. */
+export function isSuperAdmin(user: AppUser | null): boolean {
+  return canAccessSuperAdminFeatures(user?.role, user?.disabled);
+}
+
+export { ROLES };

@@ -22,5 +22,7 @@ export function getServerConfig() {
     // Add server-only values here, e.g.:
     //   databaseUrl: process.env.DATABASE_URL,
     //   stripeSecretKey: process.env.STRIPE_SECRET_KEY,
+    // AI key — accessed directly in ai.functions.ts via process.env.OPENROUTER_API_KEY
+    // Listed here for documentation purposes only.
   };
 }

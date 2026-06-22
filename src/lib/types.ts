@@ -1,3 +1,7 @@
+import type { UserRole } from "./roles";
+
+export type { UserRole } from "./roles";
+
 export type BorrowStatus = "Borrowed" | "Reading" | "Returned" | "Overdue";
 
 export type BookType = "single" | "multi";
@@ -6,21 +10,52 @@ export interface BorrowRecord {
   id: string;
   libraryId: string;
   borrowerFullName: string;
-  bookType: BookType;
-  bookNameArabic: string;
-  bookNameEnglish: string;
-  sharhName: string | null;
-  juzNumber: string | null;
+  phoneNumber: string | null;
+  email: string | null;
+  
+  // Legacy fields (kept for backward compatibility with single-book records)
+  bookType?: BookType;
+  bookNameArabic?: string;
+  bookNameEnglish?: string;
+  sharhName?: string | null;
+  juzNumber?: string | null;
+  author?: string | null;
+  
+  // New multi-book support
+  books: BorrowedBook[];
+  
   borrowDate: string; // ISO date (yyyy-mm-dd)
   expectedReturnDate: string;
-  actualReturnDate: string | null;
+  
+  // Legacy status (kept for compatibility)
   status: BorrowStatus;
+  actualReturnDate: string | null;
+  
   notes: string;
+  remarks: string | null;
   createdAt: string; // ISO datetime
   updatedAt: string;
   deleted?: boolean;
   deletedAt?: string;
   deletedBy?: string;
+  /**
+   * Links multiple BorrowRecords that were borrowed together in one transaction.
+   * Records with the same transactionId belong to the same borrowing session.
+   * Undefined on legacy records (single-book, pre-Feature 4).
+   */
+  transactionId?: string;
+}
+
+export interface BorrowedBook {
+  id: string; // unique within the record
+  bookType: BookType;
+  bookNameArabic: string;
+  bookNameEnglish: string;
+  sharhName: string | null;
+  juzNumber: string | null;
+  author: string | null;
+  status: BorrowStatus;
+  actualReturnDate: string | null;
 }
 
 export interface Reservation {
@@ -36,7 +71,7 @@ export interface Reservation {
   updatedAt: string;
 }
 
-export type NotificationType = "borrow" | "return" | "due" | "overdue" | "reservation";
+export type NotificationType = "borrow" | "return" | "due" | "overdue" | "reservation" | "support";
 
 export interface AppNotification {
   id: string;
@@ -46,6 +81,9 @@ export interface AppNotification {
   messageAr: string;
   createdAt: string;
   read: boolean;
+  /** Optional: sender info for support requests */
+  fromEmail?: string;
+  fromName?: string;
 }
 
 export interface AppUser {
@@ -53,7 +91,9 @@ export interface AppUser {
   email: string;
   displayName: string;
   photoURL: string | null;
-  role: "visitor" | "admin";
+  /** From Firestore users/{uid}.role — never derived from email. */
+  role: UserRole;
+  disabled?: boolean;
   libraryId: string | null;
   libraryName: string | null;
   emailVerified: boolean;
@@ -61,14 +101,16 @@ export interface AppUser {
 
 export interface AppSettings {
   libraryName: string;
-  openRouterKey: string;
-  aiModel: string;
   firebaseConfig: string;
   // Detected/editable account info (from Google or manual edits).
   userDisplayName: string;
   userEmail: string;
   userPhotoURL: string;
-  // Saved login credentials
+  // UI preferences
+  language?: string;
+  theme?: string;
+  updatedAt?: string;
+  // Saved login credentials (never synced to cloud)
   savedEmail?: string;
   savedPassword?: string;
 }
@@ -80,3 +122,4 @@ export interface ReaderProfile {
   currentlyBorrowed: number;
   books: string[];
 }
+

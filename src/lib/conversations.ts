@@ -1,26 +1,9 @@
-// Per-user AI conversation memory. Stored in localStorage so it works
-// offline and is fully isolated per authenticated user (keyed by uid).
-// Database (library records) always remains the source of truth — this
-// memory only provides conversational context for follow-up questions.
+// Per-user AI conversation memory. Stored in localStorage (offline-first)
+// and synced to Firestore aiConversations/{id} for multi-device access.
 
-import { doc, setDoc, deleteDoc } from "firebase/firestore";
-import { getFirebase } from "./firebase";
+import type { Conversation, ConvMessage } from "./conversations-types";
 
-export interface ConvMessage {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  timestamp: string; // ISO
-}
-
-export interface Conversation {
-  id: string;
-  userId: string;
-  title: string;
-  createdAt: string;
-  updatedAt: string;
-  messages: ConvMessage[];
-}
+export type { ConvMessage, Conversation } from "./conversations-types";
 
 function key(userId: string) {
   return `amanah-conversations-${userId}`;
@@ -47,21 +30,17 @@ export function saveAllLocal(userId: string, list: Conversation[]) {
   localStorage.setItem(key(userId), JSON.stringify(list));
 }
 
+function scheduleCloudPush(conv: Conversation) {
+  if (typeof window === "undefined") return;
+  void import("./cloud-push")
+    .then((m) => m.pushConversationToCloud(conv))
+    .catch(() => {});
+}
+
 export function saveAll(userId: string, list: Conversation[], skipCloud = false) {
   saveAllLocal(userId, list);
-  
   if (!skipCloud) {
-    const { db } = getFirebase();
-    if (db) {
-      list.forEach(conv => {
-        try {
-          setDoc(doc(db, "aiConversations", conv.id), {
-            ...conv,
-            syncedAt: new Date().toISOString()
-          });
-        } catch (e) { /* ignore, offline */ }
-      });
-    }
+    for (const conv of list) scheduleCloudPush(conv);
   }
 }
 
@@ -69,7 +48,6 @@ export function getConversation(userId: string, id: string): Conversation | null
   return loadConversations(userId).find((c) => c.id === id) ?? null;
 }
 
-// Derive a short, human title from the first user message.
 export function deriveTitle(firstMessage: string): string {
   const clean = firstMessage.trim().replace(/\s+/g, " ");
   if (clean.length <= 40) return clean;
@@ -109,28 +87,22 @@ export function appendMessage(
   };
   conv.messages.push(msg);
   conv.updatedAt = msg.timestamp;
-  // Title from first user message if still default.
   if (role === "user" && (conv.title === "New conversation" || !conv.title)) {
     conv.title = deriveTitle(content);
   }
   saveAll(userId, list);
+  scheduleCloudPush(conv);
   return conv;
 }
 
 export function deleteConversation(userId: string, convId: string) {
   const list = loadConversations(userId).filter((c) => c.id !== convId);
-  saveAll(userId, list);
-
-  // Also delete from cloud
-  const { db } = getFirebase();
-  if (db) {
-    try {
-      deleteDoc(doc(db, "aiConversations", convId));
-    } catch (e) { /* ignore */ }
-  }
+  saveAllLocal(userId, list);
+  void import("./cloud-push")
+    .then((m) => m.deleteConversationFromCloud(convId))
+    .catch(() => {});
 }
 
-// Group conversations into Today / Yesterday / Last Week / Older buckets.
 export function groupByRecency(list: Conversation[]) {
   const now = new Date();
   const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();

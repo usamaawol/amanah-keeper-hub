@@ -7,10 +7,12 @@ import { Button } from "@/components/ui/button";
 import { useI18n } from "@/lib/i18n";
 import { useAuth } from "@/lib/auth";
 import { usePwaInstall } from "@/hooks/use-pwa-install";
+import { canAccessLibrary } from "@/lib/roles";
 
 export function PublicLayout({ children }: { children: ReactNode }) {
   const { t } = useI18n();
   const { user } = useAuth();
+  const signedIn = !!user && canAccessLibrary(user.role, user.disabled);
   const path = useRouterState({ select: (s) => s.location.pathname });
   const { canInstall, install } = usePwaInstall();
 
@@ -50,8 +52,8 @@ export function PublicLayout({ children }: { children: ReactNode }) {
             <LangToggle />
             <ThemeToggle />
             <Button asChild size="sm" className="ms-1">
-              <Link to={user?.role === "admin" ? "/app/dashboard" : "/login"}>
-                {user?.role === "admin" ? t("dashboard") : t("signIn")}
+              <Link to={signedIn ? "/app/dashboard" : "/login"}>
+                {signedIn ? t("dashboard") : t("signIn")}
               </Link>
             </Button>
           </div>
