@@ -62,7 +62,7 @@ function EditBorrow() {
   useEffect(() => {
     if (record && !form) {
       let books: FormState["books"] = [];
-      if (record.books && record.books.length > 0) {
+      if (Array.isArray(record.books) && record.books.length > 0) {
         books = record.books.map(b => ({ ...b }));
       } else {
         // Migration of legacy single-book record

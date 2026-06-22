@@ -12,7 +12,7 @@ export interface BorrowRecord {
   borrowerFullName: string;
   phoneNumber: string | null;
   email: string | null;
-  
+
   // Legacy fields (kept for backward compatibility with single-book records)
   bookType?: BookType;
   bookNameArabic?: string;
@@ -20,9 +20,9 @@ export interface BorrowRecord {
   sharhName?: string | null;
   juzNumber?: string | null;
   author?: string | null;
-  
+
   // New multi-book support
-  books: BorrowedBook[];
+  books?: BorrowedBook[];
   
   borrowDate: string; // ISO date (yyyy-mm-dd)
   expectedReturnDate: string;

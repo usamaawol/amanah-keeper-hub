@@ -32,13 +32,13 @@ function daysBetween(a: string, b: string) {
 
 export function effectiveStatus(r: BorrowRecord): BorrowRecord["status"] {
   // If it's a multi-book record, derive status from books
-  if (r.books && r.books.length > 0) {
+  if (Array.isArray(r.books) && r.books.length > 0) {
     const allReturned = r.books.every((b) => b.status === "Returned");
     if (allReturned) return "Returned";
-    
+
     const anyOverdue = r.expectedReturnDate && r.expectedReturnDate < todayISO();
     if (anyOverdue) return "Overdue";
-    
+
     return "Borrowed";
   }
 
@@ -50,7 +50,7 @@ export function effectiveStatus(r: BorrowRecord): BorrowRecord["status"] {
 }
 
 export function bookLabel(r: { bookNameEnglish?: string; bookNameArabic?: string; sharhName?: string | null; juzNumber?: string | null; books?: BorrowedBook[] }, lang: "en" | "ar" | "om") {
-  if (r.books && r.books.length > 0) {
+  if (Array.isArray(r.books) && r.books.length > 0) {
     if (r.books.length === 1) return bookLabel(r.books[0], lang);
     return lang === "ar" ? `${r.books.length} كتب` : `${r.books.length} books`;
   }
@@ -206,7 +206,7 @@ export function useMarkReturned(libraryId: string) {
     mutationFn: async (rec: BorrowRecord) => {
       // If multi-book, mark all books as returned
       let updated: BorrowRecord;
-      if (rec.books && rec.books.length > 0) {
+      if (Array.isArray(rec.books) && rec.books.length > 0) {
         updated = {
           ...rec,
           books: rec.books.map((b) => ({
@@ -235,7 +235,7 @@ export function useMarkReturned(libraryId: string) {
       
       // Reservation check (simplified for now, usually checks first book's key)
       const reservations = await getReservations(libraryId);
-      const firstBook = rec.books?.[0] || rec;
+      const firstBook = Array.isArray(rec.books) ? rec.books[0] : rec;
       const res = reservations.find((r) => r.bookKey === bookKey(firstBook as never));
       if (res && res.queue.length > 0) {
         const next = res.queue[0];
@@ -257,7 +257,7 @@ export function useUndoReturn(libraryId: string) {
   return useMutation({
     mutationFn: async (rec: BorrowRecord) => {
       let updated: BorrowRecord;
-      if (rec.books && rec.books.length > 0) {
+      if (Array.isArray(rec.books) && rec.books.length > 0) {
         updated = {
           ...rec,
           books: rec.books.map((b) => ({
