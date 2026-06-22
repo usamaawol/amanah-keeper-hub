@@ -320,18 +320,48 @@ export function useSaveReservation(libraryId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (res: Reservation) => {
-      await putReservation({ ...res, updatedAt: nowISO() });
-      logAudit(libraryId.replace(/^lib_/, ""), "reservation_create");
+      const updated: Reservation = { ...res, updatedAt: nowISO() };
+      
+      // Optimistic update FIRST!
+      qc.setQueryData<Reservation[]>(["reservations", libraryId], (old = []) => {
+        const existingIndex = old.findIndex((r) => r.id === updated.id);
+        if (existingIndex !== -1) {
+          const newReservations = [...old];
+          newReservations[existingIndex] = updated;
+          return newReservations;
+        }
+        return [updated, ...old];
+      });
+      
+      // Do work in background
+      (async () => {
+        try {
+          await putReservation(updated);
+          logAudit(libraryId.replace(/^lib_/, ""), "reservation_create");
+        } catch {}
+      })();
+      return updated;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["reservations", libraryId] }),
   });
 }
 
 export function useDeleteReservation(libraryId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (id: string) => deleteReservation(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["reservations", libraryId] }),
+    mutationFn: async (id: string) => {
+      // Optimistic update FIRST!
+      qc.setQueryData<Reservation[]>(["reservations", libraryId], (old = []) => {
+        return old.filter((r) => r.id !== id);
+      });
+      
+      // Do work in background
+      (async () => {
+        try {
+          await deleteReservation(id);
+        } catch {}
+      })();
+      return id;
+    },
   });
 }
 
