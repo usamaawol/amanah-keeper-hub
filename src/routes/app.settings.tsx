@@ -42,7 +42,8 @@ function Settings() {
   const save = async () => {
     saveSettings(s);
     if (user?.uid) {
-      await pushUserProfileToCloud(user.uid, user.libraryName || s.libraryName, {});
+      // Fire and forget, no need to wait
+      pushUserProfileToCloud(user.uid, user.libraryName || s.libraryName, {}).catch(() => {});
     }
     toast.success(t("saved"));
   };

@@ -64,22 +64,25 @@ export async function sendSupportMessage(
 
   const { firebaseConfig } = getSettings();
   if (firebaseConfig.trim()) {
-    try {
-      const db = await getFirestore(firebaseConfig);
-      const { collection, doc, setDoc, serverTimestamp } = await import("firebase/firestore");
-      
-      // Save to global support inbox
-      await setDoc(doc(collection(db, "support_messages"), msg.id), {
-        ...msg,
-        syncedAt: serverTimestamp(),
-      });
-      
-      console.log("[Support] Message delivered to Firestore:", msg.id);
-    } catch (e) {
-      console.error("[Support] Failed to deliver message to Firestore", e);
-      // We don't throw here because we have the local backup, 
-      // but the UI might want to know.
-    }
+    // Fire and forget, no need to wait
+    (async () => {
+      try {
+        const db = await getFirestore(firebaseConfig);
+        const { collection, doc, setDoc, serverTimestamp } = await import("firebase/firestore");
+        
+        // Save to global support inbox
+        await setDoc(doc(collection(db, "support_messages"), msg.id), {
+          ...msg,
+          syncedAt: serverTimestamp(),
+        });
+        
+        console.log("[Support] Message delivered to Firestore:", msg.id);
+      } catch (e) {
+        console.error("[Support] Failed to deliver message to Firestore", e);
+        // We don't throw here because we have the local backup, 
+        // but the UI might want to know.
+      }
+    })();
   }
 }
 
