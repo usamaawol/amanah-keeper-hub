@@ -169,6 +169,7 @@ export function useAddBorrow(libraryId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: Omit<BorrowRecord, "id" | "libraryId" | "createdAt" | "updatedAt" | "actualReturnDate" | "deleted" | "deletedAt" | "deletedBy" | "books"> & { books: Omit<BorrowedBook, "id" | "status" | "actualReturnDate">[] }) => {
+      // 1. Create the record immediately
       const rec: BorrowRecord = {
         ...input,
         id: uid(),
@@ -184,21 +185,29 @@ export function useAddBorrow(libraryId: string) {
         createdAt: nowISO(),
         updatedAt: nowISO(),
       };
-      await putBorrow(rec);
-      logAudit(libraryId.replace(/^lib_/, ""), "borrow_create");
-      const lbl = bookLabel(rec, "en");
-      const lblAr = bookLabel(rec, "ar");
-      // Don't await putNotification, just fire and forget
-      putNotification(
-        notif(libraryId, "borrow", `${rec.borrowerFullName} borrowed ${lbl}.`, `${rec.borrowerFullName} استعار ${lblAr}.`),
-      ).catch(() => {});
+
+      // 2. Optimistic update FIRST before even doing async work!
+      qc.setQueryData<BorrowRecord[]>(["borrows", libraryId], (old = []) => {
+        return [rec, ...old];
+      });
+
+      // 3. Now do the work in the background without awaiting!
+      (async () => {
+        try {
+          await putBorrow(rec);
+          logAudit(libraryId.replace(/^lib_/, ""), "borrow_create");
+          const lbl = bookLabel(rec, "en");
+          const lblAr = bookLabel(rec, "ar");
+          putNotification(
+            notif(libraryId, "borrow", `${rec.borrowerFullName} borrowed ${lbl}.`, `${rec.borrowerFullName} استعار ${lblAr}.`),
+          ).catch(() => {});
+        } catch {}
+      })();
+
       return rec;
     },
-    onSuccess: (newRecord) => {
-      // Optimistic update!
-      qc.setQueryData<BorrowRecord[]>(["borrows", libraryId], (old = []) => {
-        return [newRecord, ...old];
-      });
+    onSuccess: () => {
+      // Invalidate notifications in the background
       qc.invalidateQueries({ queryKey: ["notifications", libraryId] });
     },
   });
@@ -208,7 +217,7 @@ export function useMarkReturned(libraryId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (rec: BorrowRecord) => {
-      // If multi-book, mark all books as returned
+      // 1. Create updated record immediately
       let updated: BorrowRecord;
       if (Array.isArray(rec.books) && rec.books.length > 0) {
         updated = {
@@ -229,35 +238,37 @@ export function useMarkReturned(libraryId: string) {
         };
       }
 
-      await putBorrow(updated);
-      logAudit(libraryId.replace(/^lib_/, ""), "record_return");
-      const lbl = bookLabel(rec, "en");
-      const lblAr = bookLabel(rec, "ar");
-      // Fire and forget putNotification
-      putNotification(
-        notif(libraryId, "return", `${rec.borrowerFullName} returned ${lbl}.`, `${rec.borrowerFullName} أعاد ${lblAr}.`),
-      ).catch(() => {});
-      
-      // Reservation check (simplified for now, usually checks first book's key)
-      // Fire and forget this too
+      // 2. Optimistic update FIRST!
+      qc.setQueryData<BorrowRecord[]>(["borrows", libraryId], (old = []) => {
+        return old.map(b => b.id === updated.id ? updated : b);
+      });
+
+      // 3. Do work in background
       (async () => {
-        const reservations = await getReservations(libraryId);
-        const firstBook = Array.isArray(rec.books) ? rec.books[0] : rec;
-        const res = reservations.find((r) => r.bookKey === bookKey(firstBook as never));
-        if (res && res.queue.length > 0) {
-          const next = res.queue[0];
-          await putNotification(
-            notif(libraryId, "reservation", `${next.name} is next in queue for ${lbl}.`, `${next.name} هو التالي في قائمة الانتظار لـ ${lblAr}.`),
-          );
-        }
+        try {
+          await putBorrow(updated);
+          logAudit(libraryId.replace(/^lib_/, ""), "record_return");
+          const lbl = bookLabel(rec, "en");
+          const lblAr = bookLabel(rec, "ar");
+          putNotification(
+            notif(libraryId, "return", `${rec.borrowerFullName} returned ${lbl}.`, `${rec.borrowerFullName} أعاد ${lblAr}.`),
+          ).catch(() => {});
+          
+          // Reservation check
+          const reservations = await getReservations(libraryId);
+          const firstBook = Array.isArray(rec.books) ? rec.books[0] : rec;
+          const res = reservations.find((r) => r.bookKey === bookKey(firstBook as never));
+          if (res && res.queue.length > 0) {
+            const next = res.queue[0];
+            await putNotification(
+              notif(libraryId, "reservation", `${next.name} is next in queue for ${lbl}.`, `${next.name} هو التالي في قائمة الانتظار لـ ${lblAr}.`),
+            );
+          }
+        } catch {}
       })();
       return updated;
     },
-    onSuccess: (updatedRecord) => {
-      // Optimistic update!
-      qc.setQueryData<BorrowRecord[]>(["borrows", libraryId], (old = []) => {
-        return old.map(b => b.id === updatedRecord.id ? updatedRecord : b);
-      });
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["notifications", libraryId] });
     },
   });
@@ -286,16 +297,22 @@ export function useUndoReturn(libraryId: string) {
           updatedAt: nowISO(),
         };
       }
-      await putBorrow(updated);
-      logAudit(libraryId.replace(/^lib_/, ""), "record_undo_return");
+
+      // Optimistic update FIRST!
+      qc.setQueryData<BorrowRecord[]>(["borrows", libraryId], (old = []) => {
+        return old.map(b => b.id === updated.id ? updated : b);
+      });
+
+      // Do work in background
+      (async () => {
+        try {
+          await putBorrow(updated);
+          logAudit(libraryId.replace(/^lib_/, ""), "record_undo_return");
+        } catch {}
+      })();
       return updated;
     },
-    onSuccess: (updatedRecord) => {
-      // Optimistic update!
-      qc.setQueryData<BorrowRecord[]>(["borrows", libraryId], (old = []) => {
-        return old.map(b => b.id === updatedRecord.id ? updatedRecord : b);
-      });
-    },
+    onSuccess: () => {},
   });
 }
 
@@ -322,9 +339,11 @@ export function useDeleteBorrow(libraryId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, deletedBy }: { id: string; deletedBy: string }) => {
-      const borrows = await getBorrows(libraryId);
-      const rec = borrows.find((b) => b.id === id);
+      // Get existing from cache (instant!)
+      const cachedBorrows = qc.getQueryData<BorrowRecord[]>(["borrows", libraryId]) || [];
+      const rec = cachedBorrows.find((b) => b.id === id);
       if (!rec) return null;
+      
       const updated: BorrowRecord = {
         ...rec,
         deleted: true,
@@ -332,17 +351,22 @@ export function useDeleteBorrow(libraryId: string) {
         deletedBy,
         updatedAt: nowISO(),
       };
-      await putBorrow(updated);
-      logAudit(libraryId.replace(/^lib_/, ""), "record_delete");
+
+      // Optimistic update FIRST!
+      qc.setQueryData<BorrowRecord[]>(["borrows", libraryId], (old = []) => {
+        return old.map(b => b.id === updated.id ? updated : b);
+      });
+
+      // Do work in background
+      (async () => {
+        try {
+          await putBorrow(updated);
+          logAudit(libraryId.replace(/^lib_/, ""), "record_delete");
+        } catch {}
+      })();
       return updated;
     },
-    onSuccess: (deletedRecord) => {
-      if (!deletedRecord) return;
-      // Optimistic update!
-      qc.setQueryData<BorrowRecord[]>(["borrows", libraryId], (old = []) => {
-        return old.map(b => b.id === deletedRecord.id ? deletedRecord : b);
-      });
-    },
+    onSuccess: () => {},
   });
 }
 
@@ -350,9 +374,11 @@ export function useEditBorrow(libraryId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (changes: Partial<BorrowRecord> & { id: string }) => {
-      const borrows = await getBorrows(libraryId);
-      const existing = borrows.find((b) => b.id === changes.id);
+      // 1. Get existing record from React Query cache (instant!)
+      const cachedBorrows = qc.getQueryData<BorrowRecord[]>(["borrows", libraryId]) || [];
+      const existing = cachedBorrows.find((b) => b.id === changes.id);
       if (!existing) throw new Error("Record not found");
+      
       const updated: BorrowRecord = {
         ...existing,
         ...changes,
@@ -363,15 +389,22 @@ export function useEditBorrow(libraryId: string) {
         // Always bump updatedAt
         updatedAt: nowISO(),
       };
-      await putBorrow(updated);
-      logAudit(libraryId.replace(/^lib_/, ""), "record_update");
+
+      // 2. Optimistic update FIRST!
+      qc.setQueryData<BorrowRecord[]>(["borrows", libraryId], (old = []) => {
+        return old.map(b => b.id === updated.id ? updated : b);
+      });
+
+      // 3. Do work in background
+      (async () => {
+        try {
+          await putBorrow(updated);
+          logAudit(libraryId.replace(/^lib_/, ""), "record_update");
+        } catch {}
+      })();
       return updated;
     },
-    onSuccess: (updatedRecord) => {
-      // Optimistic update!
-      qc.setQueryData<BorrowRecord[]>(["borrows", libraryId], (old = []) => {
-        return old.map(b => b.id === updatedRecord.id ? updatedRecord : b);
-      });
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["notifications", libraryId] });
     },
   });
