@@ -79,7 +79,7 @@ function Borrow() {
               <Button
                 variant="outline"
                 onClick={() => window.print()}
-                className="hidden sm:flex gap-2"
+                className="flex gap-2"
               >
                 <Printer className="size-4" />
                 {t("print")}
