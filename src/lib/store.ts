@@ -188,13 +188,17 @@ export function useAddBorrow(libraryId: string) {
       logAudit(libraryId.replace(/^lib_/, ""), "borrow_create");
       const lbl = bookLabel(rec, "en");
       const lblAr = bookLabel(rec, "ar");
-      await putNotification(
+      // Don't await putNotification, just fire and forget
+      putNotification(
         notif(libraryId, "borrow", `${rec.borrowerFullName} borrowed ${lbl}.`, `${rec.borrowerFullName} استعار ${lblAr}.`),
-      );
+      ).catch(() => {});
       return rec;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["borrows", libraryId] });
+    onSuccess: (newRecord) => {
+      // Optimistic update!
+      qc.setQueryData<BorrowRecord[]>(["borrows", libraryId], (old = []) => {
+        return [newRecord, ...old];
+      });
       qc.invalidateQueries({ queryKey: ["notifications", libraryId] });
     },
   });
@@ -229,24 +233,31 @@ export function useMarkReturned(libraryId: string) {
       logAudit(libraryId.replace(/^lib_/, ""), "record_return");
       const lbl = bookLabel(rec, "en");
       const lblAr = bookLabel(rec, "ar");
-      await putNotification(
+      // Fire and forget putNotification
+      putNotification(
         notif(libraryId, "return", `${rec.borrowerFullName} returned ${lbl}.`, `${rec.borrowerFullName} أعاد ${lblAr}.`),
-      );
+      ).catch(() => {});
       
       // Reservation check (simplified for now, usually checks first book's key)
-      const reservations = await getReservations(libraryId);
-      const firstBook = Array.isArray(rec.books) ? rec.books[0] : rec;
-      const res = reservations.find((r) => r.bookKey === bookKey(firstBook as never));
-      if (res && res.queue.length > 0) {
-        const next = res.queue[0];
-        await putNotification(
-          notif(libraryId, "reservation", `${next.name} is next in queue for ${lbl}.`, `${next.name} هو التالي في قائمة الانتظار لـ ${lblAr}.`),
-        );
-      }
+      // Fire and forget this too
+      (async () => {
+        const reservations = await getReservations(libraryId);
+        const firstBook = Array.isArray(rec.books) ? rec.books[0] : rec;
+        const res = reservations.find((r) => r.bookKey === bookKey(firstBook as never));
+        if (res && res.queue.length > 0) {
+          const next = res.queue[0];
+          await putNotification(
+            notif(libraryId, "reservation", `${next.name} is next in queue for ${lbl}.`, `${next.name} هو التالي في قائمة الانتظار لـ ${lblAr}.`),
+          );
+        }
+      })();
       return updated;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["borrows", libraryId] });
+    onSuccess: (updatedRecord) => {
+      // Optimistic update!
+      qc.setQueryData<BorrowRecord[]>(["borrows", libraryId], (old = []) => {
+        return old.map(b => b.id === updatedRecord.id ? updatedRecord : b);
+      });
       qc.invalidateQueries({ queryKey: ["notifications", libraryId] });
     },
   });
@@ -279,8 +290,11 @@ export function useUndoReturn(libraryId: string) {
       logAudit(libraryId.replace(/^lib_/, ""), "record_undo_return");
       return updated;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["borrows", libraryId] });
+    onSuccess: (updatedRecord) => {
+      // Optimistic update!
+      qc.setQueryData<BorrowRecord[]>(["borrows", libraryId], (old = []) => {
+        return old.map(b => b.id === updatedRecord.id ? updatedRecord : b);
+      });
     },
   });
 }
@@ -322,8 +336,12 @@ export function useDeleteBorrow(libraryId: string) {
       logAudit(libraryId.replace(/^lib_/, ""), "record_delete");
       return updated;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["borrows", libraryId] });
+    onSuccess: (deletedRecord) => {
+      if (!deletedRecord) return;
+      // Optimistic update!
+      qc.setQueryData<BorrowRecord[]>(["borrows", libraryId], (old = []) => {
+        return old.map(b => b.id === deletedRecord.id ? deletedRecord : b);
+      });
     },
   });
 }
@@ -349,8 +367,11 @@ export function useEditBorrow(libraryId: string) {
       logAudit(libraryId.replace(/^lib_/, ""), "record_update");
       return updated;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["borrows", libraryId] });
+    onSuccess: (updatedRecord) => {
+      // Optimistic update!
+      qc.setQueryData<BorrowRecord[]>(["borrows", libraryId], (old = []) => {
+        return old.map(b => b.id === updatedRecord.id ? updatedRecord : b);
+      });
       qc.invalidateQueries({ queryKey: ["notifications", libraryId] });
     },
   });
