@@ -265,7 +265,6 @@ export const translations: Dict = {
     om: "Eeyyama sirna guutuu qabda. Fayyadamtoota, mana kitaabaa fi qindaa'inoota bulchi.",
   },
   manageUsers: { en: "Manage Users", ar: "إدارة المستخدمين", om: "Fayyadamtoota Bulchi" },
-  systemOverview: { en: "System Overview", ar: "نظرة عامة على النظام", om: "Ilaalcha Sirna" },
   systemOverview: { en: "System Overview", ar: "نظرة عامة على النظام", om: "Ilaalcha Sirnaa" },
   totalUsers: { en: "Total Users", ar: "إجمالي المستخدمين", om: "Fayyadamtoota Walii" },
   totalLibraries: { en: "Total Libraries", ar: "إجمالي المكتبات", om: "Mana Kitaabaa Walii" },

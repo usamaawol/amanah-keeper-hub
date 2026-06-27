@@ -12,6 +12,7 @@ export interface SupportMessage {
   libraryName: string | null;
   status: "open" | "resolved";
   createdAt: string; // ISO datetime
+  syncedAt: string | null; // null if not synced yet
 }
 
 const LOCAL_KEY = "amanah-support-messages";
@@ -48,41 +49,61 @@ async function getFirestore(configJson: string) {
  * Superadmins watch this collection in their Support Inbox.
  */
 export async function sendSupportMessage(
-  input: Omit<SupportMessage, "id" | "createdAt" | "status">,
+  input: Omit<SupportMessage, "id" | "createdAt" | "status" | "syncedAt">,
 ): Promise<void> {
   const msg: SupportMessage = {
     ...input,
     id: newId(),
     status: "open",
     createdAt: new Date().toISOString(),
+    syncedAt: null, // Mark as not synced initially
   };
 
-  // Local backup for offline/fallback
+  // Local backup for offline/fallback - first priority!
   const list = localList();
   list.unshift(msg);
   localSave(list);
 
+  // Try to sync immediately in the background (don't await!)
+  syncPendingSupportMessages().catch((e) => {
+    // Don't let sync errors break the user experience!
+    console.warn("[Support] Background sync failed, will try again later", e);
+  });
+}
+
+/**
+ * Sync all pending (unsynced) support messages to Firestore.
+ * Called automatically when online, or manually if needed.
+ */
+export async function syncPendingSupportMessages(): Promise<void> {
   const { firebaseConfig } = getSettings();
-  if (firebaseConfig.trim()) {
-    // Fire and forget, no need to wait
-    (async () => {
-      try {
-        const db = await getFirestore(firebaseConfig);
-        const { collection, doc, setDoc, serverTimestamp } = await import("firebase/firestore");
-        
-        // Save to global support inbox
-        await setDoc(doc(collection(db, "support_messages"), msg.id), {
-          ...msg,
-          syncedAt: serverTimestamp(),
-        });
-        
-        console.log("[Support] Message delivered to Firestore:", msg.id);
-      } catch (e) {
-        console.error("[Support] Failed to deliver message to Firestore", e);
-        // We don't throw here because we have the local backup, 
-        // but the UI might want to know.
-      }
-    })();
+  if (!firebaseConfig.trim()) return;
+
+  const list = localList();
+  const pending = list.filter((m) => !m.syncedAt);
+  if (pending.length === 0) return;
+
+  try {
+    const db = await getFirestore(firebaseConfig);
+    const { collection, doc, setDoc, serverTimestamp } = await import("firebase/firestore");
+
+    // Sync each pending message
+    for (const msg of pending) {
+      await setDoc(doc(collection(db, "support_messages"), msg.id), {
+        ...msg,
+        syncedAt: serverTimestamp(),
+      });
+
+      // Mark as synced locally
+      const updatedList = localList().map((m) =>
+        m.id === msg.id ? { ...m, syncedAt: new Date().toISOString() } : m
+      );
+      localSave(updatedList);
+    }
+
+    console.log(`[Support] Synced ${pending.length} pending messages to Firestore`);
+  } catch (e) {
+    console.error("[Support] Failed to sync pending messages to Firestore", e);
   }
 }
 

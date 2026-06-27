@@ -119,7 +119,27 @@ export function startRealtimeSync(
 
   clearListeners();
   stopBackgroundSync();
-  setSyncState("syncing");
+  
+  // Add online/offline event listeners for background sync
+  const handleOnline = async () => {
+    // Sync pending support messages first
+    const { syncPendingSupportMessages } = await import("./support");
+    await syncPendingSupportMessages();
+    
+    // Then sync borrow/reservation/notifications
+    if (_activeLibraryId && _activeUserId) {
+      await runBackgroundSync(_activeLibraryId, _activeUserId, true);
+    }
+  };
+  const handleOffline = () => setSyncState("offline");
+  window.addEventListener("online", handleOnline);
+  window.addEventListener("offline", handleOffline);
+  // Store handlers for cleanup later
+  (window as any).__amanah_sync_online = handleOnline;
+  (window as any).__amanah_sync_offline = handleOffline;
+  
+  // Set initial sync state
+  setSyncState(navigator.onLine ? "syncing" : "offline");
 
   // Pre-load caches once (avoids N×getAll per snapshot)
   let borrowCache = new Map<string, BorrowRecord>();
@@ -361,6 +381,15 @@ export function startRealtimeSync(
 export function stopRealtimeSync() {
   clearListeners();
   stopBackgroundSync();
+  
+  // Remove online/offline event listeners
+  if (typeof window !== "undefined") {
+    const handleOnline = (window as any).__amanah_sync_online;
+    const handleOffline = (window as any).__amanah_sync_offline;
+    if (handleOnline) window.removeEventListener("online", handleOnline);
+    if (handleOffline) window.removeEventListener("offline", handleOffline);
+  }
+  
   _activeLibraryId = null;
   _activeUserId = null;
   _invalidate = null;
